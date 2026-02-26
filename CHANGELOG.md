@@ -9,6 +9,14 @@
 
 ---
 
+## [1.0.3] - 2026-02-26
+
+### Fixed
+
+- 자동업데이트: `releaseType: "release"` 설정 추가로 GitHub Actions 빌드 시 자동 published 상태로 배포
+
+---
+
 ## [1.0.2] - 2026-02-26
 
 ### Fixed
