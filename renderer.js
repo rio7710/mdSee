@@ -76,6 +76,8 @@ const advancedMenuSwitch = document.getElementById('advancedMenuSwitch')
 const advancedMenuText = document.getElementById('advancedMenuText')
 
 let scrollRatio = 0
+let scrollSaveTimer = null
+let pendingRestoreRatio = null
 let tocVisible = true
 let focusedTocIndex = -1  // 키보드로 포커스된 TOC 항목 인덱스
 let tocItems = []         // TOC 항목 배열 (레벨 정보 포함)
@@ -139,6 +141,16 @@ function showSuccessToast(message) {
   toastTimer = setTimeout(() => {
     actionToast.style.display = 'none'
   }, 1600)
+}
+
+function updateSyncIndicatorText(message) {
+  if (!watchIndicator) return
+  const text = String(message || '').trim()
+  if (!text) {
+    watchIndicator.innerHTML = '<span class="dot"></span> 자동 동기화 중'
+    return
+  }
+  watchIndicator.innerHTML = `<span class="dot"></span> ${text}`
 }
 
 async function invokeWithTimeout(channel, payload, timeoutMs = 8000) {
@@ -963,6 +975,7 @@ function updateAdvancedMenuToggleUi() {
 function collectUiSettings() {
   return {
     lastOpenedFilePath,
+    lastScrollRatio: scrollRatio,
     readMode: isReadMode,
     advancedMenu,
     readHideLabels,
@@ -980,6 +993,11 @@ async function saveUiSettings() {
 
 function applyUiSettings(settings = {}) {
   lastOpenedFilePath = typeof settings.lastOpenedFilePath === 'string' ? settings.lastOpenedFilePath : ''
+  const savedRatio = Number(settings.lastScrollRatio)
+  if (Number.isFinite(savedRatio) && savedRatio > 0) {
+    pendingRestoreRatio = savedRatio
+    appendDebugLog('INFO', `[스크롤] 복원 예약 ratio=${savedRatio.toFixed(4)}`)
+  }
   advancedMenu = !!settings.advancedMenu
   readHideLabels = !!settings.readHideLabels
   readAutoCopy = !!settings.readAutoCopy
@@ -1036,11 +1054,12 @@ function decorateLabelsForDisplay(content) {
   return out.join('\n')
 }
 
-async function copyTextToClipboard(text) {
-  const value = String(text || '')
+async function copyTextToClipboard(text, label = '복사') {
+  const value = toCRLF(String(text || ''))
   if (!value.trim()) return false
   try {
     await navigator.clipboard.writeText(value)
+    appendDebugLog('INFO', `[${label}] ${value.length}자 — ${value.slice(0, 60)}${value.length > 60 ? '…' : ''}`)
     return true
   } catch (_) {
     try {
@@ -1062,7 +1081,7 @@ async function copyTextToClipboard(text) {
 }
 
 function getSelectionTextWithoutLabels() {
-  if (isReadMode && lastReadSelectedBlocks.length > 0) {
+  if (isReadMode && readAutoBlockSelect && lastReadSelectedBlocks.length > 0) {
     const lines = lastReadSelectedBlocks
       .map((block) => getBlockTextWithoutLabels(block))
       .filter((line) => !!line)
@@ -1142,7 +1161,14 @@ function getBlockTextWithoutLabels(block) {
     cloned.querySelectorAll('ul, ol').forEach((n) => n.remove())
   }
   const raw = cloned.innerText || cloned.textContent || ''
-  return normalizeCopiedText(raw)
+  // 단일 블록 내부는 줄바꿈 없이 공백으로 이어붙임
+  return String(raw || '')
+    .replace(/\u00a0/g, ' ')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .join(' ')
+    .trim()
 }
 
 function normalizeCopiedText(text) {
@@ -1150,8 +1176,13 @@ function normalizeCopiedText(text) {
     .replace(/\u00a0/g, ' ')
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .filter((line) => line.length > 0)
     .join('\n')
+    .replace(/\n{2,}/g, '\n')
+    .trim()
+}
+
+function toCRLF(text) {
+  return String(text || '').replace(/\r\n/g, '\n').trim().replace(/\n/g, '\r\n')
 }
 
 function detectEol(content) {
@@ -1322,7 +1353,7 @@ async function syncReadSelectionAutoCopy() {
   const text = getSelectionTextWithoutLabels()
   const normalized = text.trim()
   if (!normalized || normalized === lastAutoCopiedText) return
-  const ok = await copyTextToClipboard(text)
+  const ok = await copyTextToClipboard(text, '자동블록복사')
   if (ok) lastAutoCopiedText = normalized
 }
 
@@ -1657,7 +1688,7 @@ function updateActiveToc() {
 }
 
 function renderMarkdown(content) {
-  if (markdownView.scrollHeight > 0) {
+  if (pendingRestoreRatio === null && markdownView.scrollHeight > 0) {
     scrollRatio = markdownView.scrollTop / markdownView.scrollHeight
   }
 
@@ -1668,6 +1699,11 @@ function renderMarkdown(content) {
   buildToc()
 
   requestAnimationFrame(() => {
+    if (pendingRestoreRatio !== null) {
+      scrollRatio = pendingRestoreRatio
+      pendingRestoreRatio = null
+      appendDebugLog('INFO', `[스크롤] 복원 완료 ratio=${scrollRatio.toFixed(4)} scrollTop=${markdownView.scrollHeight > 0 ? Math.round(markdownView.scrollHeight * scrollRatio) : 0}px`)
+    }
     if (markdownView.scrollHeight > 0) {
       markdownView.scrollTop = markdownView.scrollHeight * scrollRatio
     }
@@ -1797,6 +1833,34 @@ ipcRenderer.on('debug:log', (_, data) => {
   const level = data && data.level ? data.level : 'INFO'
   const message = data && data.message ? data.message : ''
   appendDebugLog(level, `main ${message}`)
+})
+ipcRenderer.on('update:status', (_, payload) => {
+  const status = payload && payload.status ? String(payload.status) : 'unknown'
+  const message = payload && payload.message ? String(payload.message) : ''
+  appendDebugLog(status === 'error' ? 'ERROR' : 'INFO', `update:${status} ${message}`.trim())
+
+  if (status === 'downloading' || status === 'checking' || status === 'available') {
+    updateSyncIndicatorText(message || '업데이트 확인 중')
+    return
+  }
+  if (status === 'downloaded') {
+    updateSyncIndicatorText('업데이트 준비 완료')
+    showSuccessToast('업데이트 다운로드 완료')
+    return
+  }
+  if (status === 'none') {
+    updateSyncIndicatorText('최신 버전')
+    return
+  }
+  if (status === 'error') {
+    updateSyncIndicatorText('업데이트 오류')
+    return
+  }
+  if (status === 'skipped') {
+    updateSyncIndicatorText('개발모드(업데이트 건너뜀)')
+    return
+  }
+  updateSyncIndicatorText(message || '자동 동기화 중')
 })
 
 // 버튼 이벤트
@@ -2154,6 +2218,14 @@ markdownView.addEventListener('keyup', () => {
 
 markdownView.addEventListener('scroll', () => {
   renderLineGutter()
+  if (markdownView.scrollHeight > 0) {
+    scrollRatio = markdownView.scrollTop / markdownView.scrollHeight
+  }
+  clearTimeout(scrollSaveTimer)
+  scrollSaveTimer = setTimeout(() => {
+    appendDebugLog('INFO', `[스크롤] 위치 저장 ratio=${scrollRatio.toFixed(4)}`)
+    saveUiSettings()
+  }, 800)
 }, { passive: true })
 
 markdownView.addEventListener('dblclick', () => {
@@ -2438,28 +2510,47 @@ document.addEventListener('copy', (e) => {
   if (!isReadMode) return
 
   if (readHtmlClip) {
-    // HTML 클립 켬: 선택된 모든 블록을 HTML로 복사
-    const blocks = lastReadSelectedBlocks.length > 0
-      ? lastReadSelectedBlocks
-      : (() => {
-          const sel = window.getSelection()
-          if (!sel || sel.rangeCount === 0) return []
-          const range = sel.getRangeAt(0)
-          return uniqueDeepestBlocks(getIntersectingBlocks(range))
-        })()
-    if (blocks.length === 0) return
-    e.preventDefault()
-    const { clipboard } = require('electron')
-    const htmlContent = blocks.map((b) => {
-      const clone = b.cloneNode(true)
-      clone.querySelectorAll('.md-label').forEach((el) => el.remove())
-      return clone.outerHTML
-    }).join('\n')
-    const textContent = blocks.map((b) => {
-      if (b.tagName === 'TABLE') return tableToPlainText(b)
-      return getBlockTextWithoutLabels(b)
-    }).filter(Boolean).join('\n')
-    clipboard.write({ html: htmlContent, text: textContent })
+    // HTML 클립 켬: 표만 HTML, 나머지 텍스트는 plain text(줄바꿈만)
+    if (readAutoBlockSelect && lastReadSelectedBlocks.length > 0) {
+      // 자동블록 ON: lastReadSelectedBlocks 사용
+      e.preventDefault()
+      const { clipboard } = require('electron')
+      const tables = lastReadSelectedBlocks.filter((b) => b.tagName === 'TABLE')
+      const textContent = toCRLF(lastReadSelectedBlocks.map((b) => {
+        if (b.tagName === 'TABLE') return tableToPlainText(b)
+        return getBlockTextWithoutLabels(b)
+      }).filter(Boolean).join('\n'))
+      if (tables.length > 0) {
+        const htmlContent = tables.map((t) => t.outerHTML).join('\n')
+        clipboard.write({ html: htmlContent, text: textContent })
+        appendDebugLog('INFO', `[복사:HTML클립] 표${tables.length}개 ${textContent.length}자 — ${textContent.slice(0, 60)}${textContent.length > 60 ? '…' : ''}`)
+      } else {
+        clipboard.write({ text: textContent })
+        appendDebugLog('INFO', `[복사:HTML클립→텍스트] ${textContent.length}자 — ${textContent.slice(0, 60)}${textContent.length > 60 ? '…' : ''}`)
+      }
+    } else {
+      // 자동블록 OFF: 실제 선택 범위에서 표만 HTML로 추출
+      const sel = window.getSelection()
+      if (!sel || sel.rangeCount === 0) return
+      const range = sel.getRangeAt(0)
+      const fragment = range.cloneContents()
+      const wrapper = document.createElement('div')
+      wrapper.appendChild(fragment)
+      wrapper.querySelectorAll('.md-label').forEach((el) => el.remove())
+      const tables = [...wrapper.querySelectorAll('table')]
+      const textContent = toCRLF(normalizeCopiedText(wrapper.innerText || wrapper.textContent || ''))
+      if (!textContent) return
+      e.preventDefault()
+      const { clipboard } = require('electron')
+      if (tables.length > 0) {
+        const htmlContent = tables.map((t) => t.outerHTML).join('\n')
+        clipboard.write({ html: htmlContent, text: textContent })
+        appendDebugLog('INFO', `[복사:HTML클립(수동)] 표${tables.length}개 ${textContent.length}자 — ${textContent.slice(0, 60)}${textContent.length > 60 ? '…' : ''}`)
+      } else {
+        clipboard.write({ text: textContent })
+        appendDebugLog('INFO', `[복사:HTML클립(수동)→텍스트] ${textContent.length}자 — ${textContent.slice(0, 60)}${textContent.length > 60 ? '…' : ''}`)
+      }
+    }
     return
   }
 
@@ -2469,16 +2560,18 @@ document.addEventListener('copy', (e) => {
     e.preventDefault()
     const { clipboard } = require('electron')
     const htmlContent = tables.map((t) => t.outerHTML).join('\n')
-    const textContent = tables.map(tableToPlainText).join('\n\n')
+    const textContent = toCRLF(tables.map(tableToPlainText).join('\n'))
     clipboard.write({ html: htmlContent, text: textContent })
+    appendDebugLog('INFO', `[복사:표HTML] ${textContent.length}자 — ${textContent.slice(0, 60)}${textContent.length > 60 ? '…' : ''}`)
     return
   }
 
   const text = getSelectionTextWithoutLabels()
   if (!text) return
   e.preventDefault()
+  appendDebugLog('INFO', `[일반복사] ${text.length}자 — ${text.slice(0, 60)}${text.length > 60 ? '…' : ''}`)
   if (e.clipboardData) {
-    e.clipboardData.setData('text/plain', text)
+    e.clipboardData.setData('text/plain', toCRLF(text))
   }
 })
 

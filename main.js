@@ -11,6 +11,7 @@ let updateInitialized = false
 const defaultUiSettings = {
   configVersion: 1,
   lastOpenedFilePath: '',
+  lastScrollRatio: 0,
   readMode: false,
   advancedMenu: false,
   readHideLabels: false,
@@ -35,9 +36,12 @@ function sanitizeSettings(input) {
   const rawVersion = Number(src.configVersion)
   const configVersion = Number.isInteger(rawVersion) && rawVersion > 0 ? rawVersion : 1
   const lastOpenedFilePath = typeof src.lastOpenedFilePath === 'string' ? src.lastOpenedFilePath : ''
+  const rawRatio = Number(src.lastScrollRatio)
+  const lastScrollRatio = Number.isFinite(rawRatio) && rawRatio >= 0 && rawRatio <= 1 ? rawRatio : 0
   return {
     configVersion,
     lastOpenedFilePath,
+    lastScrollRatio,
     readMode: !!src.readMode,
     advancedMenu: !!src.advancedMenu,
     readHideLabels: !!src.readHideLabels,
@@ -550,11 +554,24 @@ function initAutoUpdater() {
   }
 
   const updateUrl = String(process.env.MDSEE_UPDATE_URL || '').trim()
+  const updateToken = String(process.env.MDSEE_UPDATE_TOKEN || process.env.GH_TOKEN || '').trim()
+  const authHeaders = updateToken ? { Authorization: `Bearer ${updateToken}` } : undefined
+
+  // 1) MDSEE_UPDATE_URL 지정 시: generic feed 사용
+  // 2) 미지정 시: electron-builder publish(github) 설정 사용
+  // private 저장소 대응을 위해 토큰이 있으면 요청 헤더를 함께 전달한다.
   if (updateUrl) {
     autoUpdater.setFeedURL({
       provider: 'generic',
-      url: updateUrl
+      url: updateUrl,
+      requestHeaders: authHeaders
     })
+    sendDebugLog(`auto-update feed=generic url=${updateUrl}`)
+  } else if (authHeaders) {
+    autoUpdater.requestHeaders = authHeaders
+    sendDebugLog('auto-update feed=github(default) with auth header')
+  } else {
+    sendDebugLog('auto-update feed=github(default) without auth header')
   }
 
   autoUpdater.autoDownload = true
@@ -570,7 +587,12 @@ function initAutoUpdater() {
     sendUpdateStatus('none', '최신 버전입니다.')
   })
   autoUpdater.on('error', (err) => {
-    sendUpdateStatus('error', err && err.message ? err.message : '업데이트 확인 중 오류가 발생했습니다.')
+    const raw = err && err.message ? err.message : '업데이트 확인 중 오류가 발생했습니다.'
+    const mapped = /401|403|404|ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT/i.test(raw)
+      ? `업데이트 서버 접근 실패: ${raw}`
+      : raw
+    sendUpdateStatus('error', mapped)
+    sendDebugLog(`auto-update error=${mapped}`)
   })
   autoUpdater.on('download-progress', (progress) => {
     const p = Math.round(progress && progress.percent ? progress.percent : 0)
