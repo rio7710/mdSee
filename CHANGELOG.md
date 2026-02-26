@@ -15,6 +15,11 @@
 - 일반 텍스트 우클릭 시 해당 줄 기준 편집 활성화 (선택 영역 없어도 동작)
 - 미저장 변경이 있을 때 파일 열기/드래그 로드/닫기 전에 저장 여부 확인 모달 표시
 - 라벨 우클릭 시 라벨 전용 메뉴 추가 (`[정의] [해설] [사례] [근거] [인용] [질문] [실습] [요약] [전환]`)
+- `electron-updater` 기반 자동업데이트 체크/다운로드/재시작 적용 로직 추가
+- 환경변수 `MDSEE_UPDATE_URL`로 generic 업데이트 피드 주소 지정 지원
+- `package.json` build에 GitHub Releases publish 설정 추가 (내부팀 배포용 Private Repo)
+- `package.json`에 `release` 스크립트 추가 (`electron-builder --publish always`)
+- `.github/workflows/release.yml` 추가: 태그 push 시 자동 빌드 및 GitHub Release 생성
 
 ### Changed
 
@@ -24,11 +29,6 @@
 - 편집모드 메뉴 용어를 `내용 편집(editContent)`으로 통일하고 `블록 편집` 메뉴를 제거
 - 툴바에 전역 `고급메뉴` 토글 추가: 우클릭 메뉴를 `가능 항목만 표시`/`전체 표시(비활성 포함)`로 전환
 - 빌드 타겟을 자동업데이트 가능한 Windows NSIS 설치형으로 전환
-
-### Added
-
-- `electron-updater` 기반 자동업데이트 체크/다운로드/재시작 적용 로직 추가
-- 환경변수 `MDSEE_UPDATE_URL`로 generic 업데이트 피드 주소 지정 지원
 
 ---
 
