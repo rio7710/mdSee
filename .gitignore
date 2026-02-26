@@ -5,8 +5,9 @@
 !README.md
 !CHANGELOG.md
 
-# Local Claude Code settings
+# Local dev/tool configs
 .claude/
+.markdownlint.json
 
 # Dependencies and build outputs
 node_modules/
