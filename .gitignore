@@ -8,6 +8,7 @@
 # Local dev/tool configs
 .claude/
 .markdownlint.json
+doc/
 
 # Dependencies and build outputs
 node_modules/
