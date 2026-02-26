@@ -1,0 +1,19 @@
+# Markdown files: ignore by default
+*.md
+
+# Keep version history markdown tracked
+!CHANGELOG.md
+
+# Dependencies and build outputs
+node_modules/
+dist/
+
+# Logs and temporary files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS/editor artifacts
+.DS_Store
+Thumbs.db

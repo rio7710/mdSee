@@ -1,0 +1,283 @@
+version: 1.1.0
+updated_at: 2026-02-24
+owner: rio77
+scope: 사회복지
+
+policy:
+  mode: strict
+  apply_only_after_structure: true
+  ask_when_ambiguous: true
+  lecture_version_lock: true
+  apply_to_whole_document: true
+  record_only_if_replaced: true
+  notes:
+    - 띄어쓰기/결합형/문장부호 통일은 라벨 종류와 무관하게 전체 텍스트에 적용
+    - 인용구(>)와 [사례]/[해설]/[질문]에도 동일 규칙 적용
+    - 신규 단어는 후보목록으로 관리 후 사용자 확인을 거쳐 반영
+    - 라이브러리 갱신 시 해당 렉처 전체에 재적용하고 최종 버전 1개만 유지
+
+auto_apply:
+  - id: W-001
+    source: 집단슈퍼비전
+    target: 집단 슈퍼비전
+    note: 결합형 통일
+  - id: W-002
+    source: 동료슈퍼비전
+    target: 동료 슈퍼비전
+  - id: W-003
+    source: 개별슈퍼비전
+    target: 개별 슈퍼비전
+  - id: W-004
+    source: 집합슈퍼비전
+    target: 집합 슈퍼비전
+  - id: W-005
+    source: 슈퍼바이지간
+    target: 슈퍼바이지 간
+  - id: W-006
+    source: 관계속에서
+    target: 관계 속에서
+  - id: W-007
+    source: 할수
+    target: 할 수
+  - id: W-008
+    source: 합의할수
+    target: 합의할 수
+  - id: W-009
+    source: 갖기위한
+    target: 갖기 위한
+  - id: W-010
+    source: 종결여부
+    target: 종결 여부
+  - id: W-011
+    source: 실행여부
+    target: 실행 여부
+  - id: W-012
+    source: 참여여부
+    target: 참여 여부
+  - id: W-013
+    source: 슈퍼비전의핵심
+    target: 슈퍼비전의 핵심
+  - id: W-014
+    source: 지식필요
+    target: 지식 필요
+  - id: W-015
+    source: 의제논의
+    target: 의제 논의
+  - id: W-016
+    source: 과제확인
+    target: 과제 확인
+  - id: W-017
+    source: 대안수립
+    target: 대안 수립
+  - id: W-018
+    source: 목표수립
+    target: 목표 수립
+  - id: W-019
+    source: 계획수립
+    target: 계획 수립
+  - id: W-020
+    source: 기록검토
+    target: 기록 검토
+  - id: W-021
+    source: 사례발표
+    target: 사례 발표
+  - id: W-022
+    source: 사례분석
+    target: 사례 분석
+  - id: W-023
+    source: 문제해결
+    target: 문제 해결
+  - id: W-024
+    source: 의사결정
+    target: 의사 결정
+  - id: W-025
+    source: 행동수정
+    target: 행동 수정
+  - id: W-026
+    source: 학습경험
+    target: 학습 경험
+  - id: W-027
+    source: 서비스제공
+    target: 서비스 제공
+  - id: W-028
+    source: 정보제공
+    target: 정보 제공
+  - id: W-029
+    source: 책읽기
+    target: 책 읽기
+  - id: W-030
+    source: 자기노출
+    target: 자기 노출
+  - id: W-031
+    source: 자기확신
+    target: 자기 확신
+  - id: W-032
+    source: 자기효능감
+    target: 자기 효능감
+  - id: W-033
+    source: 역할모델
+    target: 역할 모델
+  - id: W-034
+    source: 라포형성
+    target: 라포 형성
+  - id: W-035
+    source: 말풍선그림
+    target: 말풍선 그림
+  - id: W-036
+    source: 공적.사적
+    target: 공적·사적
+  - id: W-037
+    source: 학습기법
+    target: 학습 기법
+  - id: W-038
+    source: 회의진행
+    target: 회의 진행
+  - id: W-039
+    source: 조직구성원
+    target: 조직 구성원
+  - id: W-040
+    source: 표준직무
+    target: 표준 직무
+  - id: W-041
+    source: 필요없음
+    target: 필요 없음
+  - id: W-042
+    source: 문제확인
+    target: 문제 확인
+  - id: W-043
+    source: 사례추적
+    target: 사례 추적
+  - id: W-044
+    source: 변화추세
+    target: 변화 추세
+  - id: W-045
+    source: 비전이해
+    target: 비전 이해
+  - id: W-046
+    source: 기관구조파악
+    target: 기관 구조 파악
+  - id: W-047
+    source: 기록유지와 기록활동
+    target: 기록 유지와 기록 활동
+  - id: W-048
+    source: 서비스연계망
+    target: 서비스 연계망
+  - id: W-049
+    source: 매체활용
+    target: 매체 활용
+  - id: W-050
+    source: 관계기술
+    target: 관계 기술
+  - id: W-051
+    source: 직무관련정책
+    target: 직무관련 정책
+  - id: W-052
+    source: 의사소통기술
+    target: 의사소통 기술
+  - id: W-053
+    source: 집단슈퍼바이저
+    target: 집단 슈퍼바이저
+  - id: W-054
+    source: 집단수퍼비젼
+    target: 집단 수퍼비젼
+  - id: W-055
+    source: 의사 결정방법
+    target: 의사결정 방법
+  - id: W-056
+    source: 슈퍼비전이라고함
+    target: 슈퍼비전이라고 함
+  - id: W-057
+    source: 집단성원
+    target: 집단 성원
+  - id: W-058
+    source: 집단구성원
+    target: 집단 구성원
+  - id: W-059
+    source: 개별수퍼비젼
+    target: 개별 수퍼비젼
+  - id: W-060
+    source: 집단상황
+    target: 집단 상황
+  - id: W-061
+    source: 집단토론
+    target: 집단 토론
+  - id: W-062
+    source: 성원들간
+    target: 성원들 간
+  - id: W-063
+    source: 집단압력
+    target: 집단 압력
+  - id: W-064
+    source: 책임석
+    target: 책임성
+  - id: W-065
+    source: 전문가각
+    target: 전문가가
+  - id: W-066
+    source: 곤련
+    target: 관련
+
+symbol_replace:
+  - id: S-001
+    source: '->'
+    target: '§'
+  - id: S-002
+    source: '\u21B3'
+    target: '§'
+  - id: S-003
+    source: '\u2192'
+    target: '§'
+  - id: S-004
+    source: '\uFF5E'
+    target: '~'
+
+regex_replace:
+  - id: R-001
+    pattern: '(?<!\\S)중요\\s+함(?!\\S)'
+    target: '중요함'
+  - id: R-002
+    pattern: '(?<!\\S)맞추어\\s+짐(?!\\S)'
+    target: '맞추어짐'
+  - id: R-003
+    pattern: '(?<!\\S)모니터링\\s+되어야(?!\\S)'
+    target: '모니터링되어야'
+  - id: R-004
+    pattern: '(?<!\\S)시작\\s*단계(?!\\S)'
+    target: '시작 단계'
+  - id: R-005
+    pattern: '(?<!\\S)진행\\s*단계(?!\\S)'
+    target: '진행 단계'
+  - id: R-006
+    pattern: '(?<!\\S)종결\\s*단계(?!\\S)'
+    target: '종결 단계'
+  - id: R-007
+    pattern: '(?<!\\S)초기\\s*단계(?!\\S)'
+    target: '초기 단계'
+  - id: R-008
+    pattern: '(?<!\\S)강화\\s*단계(?!\\S)'
+    target: '강화 단계'
+  - id: R-009
+    pattern: '(?<!\\S)준비\\s*단계(?!\\S)'
+    target: '준비 단계'
+  - id: R-010
+    pattern: '(?<!\\S)(논의|확인|수립|제공|형성|검토|발표|분석|결정|수정|경험)\\s{2,}(?!\\S)'
+    target: '$1 '
+  - id: R-011
+    pattern: "(함|음|됨|임)\\.(?=(\\s|$|\"|'|\\)|\\]|\\}|>|,))"
+    target: '$1'
+
+ask_first:
+  - id: W-101
+    source: 사례 관리
+    target: 사례관리
+    context: 사례 관리 회의
+    note: 기관별 표기 관행 확인 필요
+
+do_not_replace:
+  - id: W-201
+    source: 기능
+    target: null
+    context: 기능/기능적/역기능
+    note: 문맥 의존성이 커 자동 치환 금지
+
+

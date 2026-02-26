@@ -1,0 +1,45 @@
+{
+  "name": "mdsee",
+  "version": "1.0.0",
+  "description": "Markdown file viewer with real-time preview",
+  "main": "main.js",
+  "scripts": {
+    "start": "node launch.js",
+    "build": "electron-builder --win nsis"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.3",
+    "highlight.js": "^11.9.0",
+    "marked": "^12.0.0"
+  },
+  "devDependencies": {
+    "electron": "^28.3.3",
+    "electron-builder": "^24.0.0"
+  },
+  "build": {
+    "appId": "com.mdsee.app",
+    "productName": "mdSee",
+    "files": [
+      "main.js",
+      "index.html",
+      "renderer.js",
+      "styles.css",
+      "node_modules/**"
+    ],
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}
