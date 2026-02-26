@@ -2,6 +2,7 @@
 *.md
 
 # Keep tracked markdown files
+!README.md
 !CHANGELOG.md
 
 # Local Claude Code settings
