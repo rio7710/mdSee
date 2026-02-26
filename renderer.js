@@ -25,18 +25,27 @@ marked.use({ renderer, breaks: true, gfm: true })
 const dropzone = document.getElementById('dropzone')
 const markdownView = document.getElementById('markdownView')
 const markdownBody = document.getElementById('markdownBody')
+const lineGutter = document.getElementById('lineGutter')
 const tocPanel = document.getElementById('tocPanel')
 const tocList = document.getElementById('tocList')
 const filePath = document.getElementById('filePath')
 const watchIndicator = document.getElementById('watchIndicator')
 const appTitle = document.getElementById('appTitle')
+const appVersion = document.getElementById('appVersion')
 const btnOpen = document.getElementById('btnOpen')
 const btnOpenLarge = document.getElementById('btnOpenLarge')
 const btnSave = document.getElementById('btnSave')
+const btnMoveLine = document.getElementById('btnMoveLine')
+const btnConsoleToggle = document.getElementById('btnConsoleToggle')
 const btnMinimize = document.getElementById('btnMinimize')
 const btnMaximize = document.getElementById('btnMaximize')
 const btnClose = document.getElementById('btnClose')
 const btnToc = document.getElementById('btnToc')
+const actionToast = document.getElementById('actionToast')
+const debugConsole = document.getElementById('debugConsole')
+const debugConsoleBody = document.getElementById('debugConsoleBody')
+const btnConsoleCopy = document.getElementById('btnConsoleCopy')
+const btnConsoleClear = document.getElementById('btnConsoleClear')
 const errorModal = document.getElementById('errorModal')
 const errorModalMessage = document.getElementById('errorModalMessage')
 const btnErrorClose = document.getElementById('btnErrorClose')
@@ -72,6 +81,7 @@ let focusedTocIndex = -1  // 키보드로 포커스된 TOC 항목 인덱스
 let tocItems = []         // TOC 항목 배열 (레벨 정보 포함)
 let currentFilePath = ''
 let contextTarget = null
+let lastMenuActionContext = null
 let diskContent = ''
 let workingContent = ''
 let isDirty = false
@@ -86,6 +96,69 @@ let lastAutoCopiedText = ''
 let lastReadSelectedBlocks = []
 let activeInlineEditor = null
 let labelContextTarget = null
+let lastJumpedSourceLine = -1
+let isConsoleVisible = true
+let suppressGlobalMenuCloseUntil = 0
+let toastTimer = null
+let lastOpenedFilePath = ''
+
+function appendDebugLog(level, message) {
+  if (!debugConsoleBody) return
+  const now = new Date()
+  const hh = String(now.getHours()).padStart(2, '0')
+  const mm = String(now.getMinutes()).padStart(2, '0')
+  const ss = String(now.getSeconds()).padStart(2, '0')
+  const lvl = String(level || 'INFO').toUpperCase()
+  const line = `[${hh}:${mm}:${ss}] [${lvl}] ${String(message || '')}`
+  const div = document.createElement('div')
+  div.className = `debug-console-line ${lvl === 'ERROR' ? 'error' : ''}`.trim()
+  div.textContent = line
+  debugConsoleBody.appendChild(div)
+  while (debugConsoleBody.childNodes.length > 400) {
+    debugConsoleBody.removeChild(debugConsoleBody.firstChild)
+  }
+  debugConsoleBody.scrollTop = debugConsoleBody.scrollHeight
+}
+
+function getActionLabel(action) {
+  const map = {
+    shiftUp: '위계 한 단계 위로',
+    shiftDown: '위계 한 단계 아래로',
+    toBullet: '헤더 -> 블릿',
+    toHeading: '블릿 -> 헤더',
+    editContent: '내용 편집'
+  }
+  return map[action] || String(action || '')
+}
+
+function showSuccessToast(message) {
+  if (!actionToast) return
+  actionToast.textContent = String(message || '완료되었습니다.')
+  actionToast.style.display = 'block'
+  if (toastTimer) clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => {
+    actionToast.style.display = 'none'
+  }, 1600)
+}
+
+async function invokeWithTimeout(channel, payload, timeoutMs = 8000) {
+  let timer = null
+  try {
+    const timeoutPromise = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`IPC_TIMEOUT:${channel}`)), timeoutMs)
+    })
+    return await Promise.race([ipcRenderer.invoke(channel, payload), timeoutPromise])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+function setConsoleVisibility(nextVisible) {
+  isConsoleVisible = !!nextVisible
+  if (!debugConsole) return
+  debugConsole.classList.toggle('hidden', !isConsoleVisible)
+  if (btnConsoleToggle) btnConsoleToggle.classList.toggle('active', isConsoleVisible)
+}
 
 function splitEditableLine(line) {
   const src = String(line || '')
@@ -156,6 +229,7 @@ function setDirty(next) {
 function showErrorModal(message) {
   errorModalMessage.textContent = message || '알 수 없는 오류가 발생했습니다.'
   errorModal.style.display = 'flex'
+  appendDebugLog('ERROR', message || '알 수 없는 오류가 발생했습니다.')
 }
 
 function hideErrorModal() {
@@ -291,10 +365,11 @@ function parseHeadingLine(line) {
 }
 
 function parseListLine(line) {
-  let m = line.match(/^(\s*)([-+*])([ \t]+)(.*)$/)
-  if (m) return { text: m[4] }
-  m = line.match(/^(\s*)(\d+[.)])([ \t]+)(.*)$/)
-  if (m) return { text: m[4] }
+  const src = String(line || '')
+  let m = src.match(/^\s*(?:>\s*)*([-+*])([ \t]+)(.*)$/)
+  if (m) return { text: m[3] }
+  m = src.match(/^\s*(?:>\s*)*(\d+[.)])([ \t]+)(.*)$/)
+  if (m) return { text: m[3] }
   return null
 }
 
@@ -316,85 +391,504 @@ function normalizeCompareText(text) {
     .toLowerCase()
 }
 
-function inferListSourceLine(content, listText) {
-  const key = normalizeCompareText(listText)
-  if (!key) return undefined
-  const lines = String(content || '').split(/\r?\n/)
-  const matches = []
-  for (let i = 0; i < lines.length; i++) {
-    const l = parseListLine(lines[i])
-    if (!l) continue
-    const candidate = normalizeCompareText(l.text)
-    if (!candidate) continue
-    if (candidate === key || candidate.includes(key) || key.includes(candidate)) {
-      matches.push(i)
+function buildLineBasedContext(sourceLine, targetEl, selectedText = '') {
+  const lines = String(workingContent || '').split(/\r?\n/)
+  if (!Number.isInteger(sourceLine) || sourceLine < 0 || sourceLine >= lines.length) return null
+
+  // DOM 우선 판정: 리스트/헤더 내부 클릭 시 하위 p/span이 선택되어도
+  // 상위 구조(li/hx) 기준으로 위계 이동 액션을 유지한다.
+  const headingEl = targetEl && targetEl.closest ? targetEl.closest('h1, h2, h3, h4') : null
+  if (headingEl) {
+    const headingLine = Number(headingEl.dataset.srcLine)
+    const resolvedLine = Number.isInteger(headingLine) ? headingLine : sourceLine
+    const level = Number(headingEl.tagName[1]) || 2
+    return {
+      kind: 'heading',
+      level,
+      targetType: 'heading',
+      sourceLine: resolvedLine,
+      targets: [{ targetType: 'heading', sourceLine: resolvedLine }],
+      selectedText,
+      debugBlocks: [{ sourceLine: resolvedLine, text: (headingEl.textContent || '').trim() }],
+      anchorElement: headingEl,
+      allowedActions: ['editContent', 'shiftUp', 'shiftDown', 'toBullet']
     }
   }
-  if (matches.length === 1) return matches[0]
-  return undefined
+
+  const liEl = targetEl && targetEl.closest ? targetEl.closest('li') : null
+  if (liEl) {
+    const liLine = Number(liEl.dataset.srcLine)
+    const resolvedLine = Number.isInteger(liLine) ? liLine : sourceLine
+    const allLis = Array.from(markdownBody.querySelectorAll('li'))
+    const listIndex = allLis.findIndex((item) => item === liEl)
+    const isNumbered = !!liEl.closest('ol')
+    return {
+      kind: isNumbered ? 'numbered' : 'bullet',
+      targetType: 'list',
+      sourceLine: resolvedLine,
+      targets: [{
+        targetType: 'list',
+        listIndex: listIndex >= 0 ? listIndex : undefined,
+        sourceLine: resolvedLine,
+        listText: getListOwnText(liEl)
+      }],
+      bulletDepth: getListDepth(liEl),
+      promoteHeadingLevel: inferPromoteHeadingLevelFromLi(liEl),
+      selectedText,
+      debugBlocks: [{ sourceLine: resolvedLine, text: getListOwnText(liEl) }],
+      anchorElement: liEl,
+      allowedActions: ['editContent', 'shiftUp', 'shiftDown', 'toHeading']
+    }
+  }
+
+  const line = lines[sourceLine] || ''
+  const heading = line.match(/^(\s{0,3})(#{1,6})([ \t]+)(.*)$/)
+  if (heading) {
+    const level = heading[2].length
+    return {
+      kind: 'heading',
+      level,
+      targetType: 'heading',
+      sourceLine,
+      targets: [{ targetType: 'heading', sourceLine }],
+      selectedText,
+      debugBlocks: [{ sourceLine, text: heading[4] || line.trim() }],
+      anchorElement: targetEl && targetEl.closest ? targetEl.closest(BLOCK_SELECTORS) : null,
+      allowedActions: ['editContent', 'shiftUp', 'shiftDown', 'toBullet']
+    }
+  }
+
+  const bullet = line.match(/^(\s*)([-+*])([ \t]+)(.*)$/)
+  const numbered = line.match(/^(\s*)(\d+[.)])([ \t]+)(.*)$/)
+  const listMatch = bullet || numbered
+  if (listMatch) {
+    const li = targetEl && targetEl.closest ? targetEl.closest('li') : null
+    const allLis = Array.from(markdownBody.querySelectorAll('li'))
+    const listIndex = li ? allLis.findIndex((item) => item === li) : -1
+    const listText = li ? getListOwnText(li) : (listMatch[4] || '').trim()
+    const kind = numbered ? 'numbered' : 'bullet'
+    const indent = (listMatch[1] || '').length
+    const bulletDepth = li ? getListDepth(li) : Math.floor(indent / 2) + 1
+    const promoteHeadingLevel = li ? inferPromoteHeadingLevelFromLi(li) : 2
+    return {
+      kind,
+      targetType: 'list',
+      sourceLine,
+      targets: [{
+        targetType: 'list',
+        listIndex: listIndex >= 0 ? listIndex : undefined,
+        sourceLine,
+        listText
+      }],
+      bulletDepth,
+      promoteHeadingLevel,
+      selectedText,
+      debugBlocks: [{ sourceLine, text: listText || line.trim() }],
+      anchorElement: li || (targetEl && targetEl.closest ? targetEl.closest(BLOCK_SELECTORS) : null),
+      allowedActions: ['editContent', 'shiftUp', 'shiftDown', 'toHeading']
+    }
+  }
+
+  return {
+    kind: 'text',
+    targetType: 'line',
+    sourceLine,
+    selectedText,
+    debugBlocks: [{ sourceLine, text: line.trim() }],
+    anchorElement: targetEl && targetEl.closest ? targetEl.closest(BLOCK_SELECTORS) : null,
+    allowedActions: ['editContent']
+  }
 }
 
 function annotateSourceLines(content) {
   const lines = String(content || '').split(/\r?\n/)
   const headingSrc = []
   const listSrc = []
+  const paraSrc = []
+  const quoteSrc = []
+  const preSrc = []
+  const hrSrc = []
+  const tableSrc = []
+
+  const isHrLine = (line) => /^\s{0,3}([-*_])(\s*\1){2,}\s*$/.test(String(line || ''))
+  const isQuoteLine = (line) => /^\s*>/.test(String(line || ''))
+  const isFenceStart = (line) => /^\s*(```+|~~~+)/.test(String(line || ''))
+  const isTableSeparator = (line) => /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(String(line || ''))
+  const isTableLike = (line) => /\|/.test(String(line || ''))
+
+  let inFence = false
+  let fenceChar = ''
+
   for (let i = 0; i < lines.length; i++) {
-    const h = parseHeadingLine(lines[i])
+    const line = lines[i]
+    const trimmed = String(line || '').trim()
+    if (!trimmed) continue
+
+    const fence = line.match(/^\s*(```+|~~~+)/)
+    if (fence) {
+      const ch = fence[1][0]
+      if (!inFence) {
+        inFence = true
+        fenceChar = ch
+        preSrc.push({ start: i, end: i })
+      } else if (ch === fenceChar) {
+        inFence = false
+        fenceChar = ''
+      }
+      continue
+    }
+    if (inFence) continue
+
+    const h = parseHeadingLine(line)
     if (h && h.level >= 1 && h.level <= 4) {
-      headingSrc.push({ line: i, level: h.level, text: normalizeCompareText(h.text) })
+      headingSrc.push({ line: i, level: h.level })
+      continue
     }
-    const l = parseListLine(lines[i])
-    if (l) {
-      listSrc.push({ line: i, text: normalizeCompareText(l.text) })
+
+    if (parseListLine(line)) {
+      listSrc.push(i)
+      continue
     }
+
+    if (isHrLine(line)) {
+      hrSrc.push({ start: i, end: i })
+      continue
+    }
+
+    if (isQuoteLine(line)) {
+      const start = i
+      while (i + 1 < lines.length && isQuoteLine(lines[i + 1])) i += 1
+      quoteSrc.push({ start, end: i })
+      continue
+    }
+
+    if (isTableLike(line) && i + 1 < lines.length && isTableSeparator(lines[i + 1])) {
+      const start = i
+      i += 1
+      while (i + 1 < lines.length && String(lines[i + 1] || '').trim() && isTableLike(lines[i + 1])) i += 1
+      tableSrc.push({ start, end: i })
+      continue
+    }
+
+    const start = i
+    while (i + 1 < lines.length) {
+      const next = lines[i + 1]
+      const nextTrim = String(next || '').trim()
+      if (!nextTrim) break
+      if (isFenceStart(next) || isHrLine(next) || isQuoteLine(next) || parseHeadingLine(next) || parseListLine(next)) break
+      if (isTableLike(next) && i + 2 < lines.length && isTableSeparator(lines[i + 2])) break
+      i += 1
+    }
+    paraSrc.push({ start, end: i })
+  }
+
+  const mapBySequence = (elements, srcRanges) => {
+    for (let i = 0; i < elements.length; i++) {
+      const el = elements[i]
+      const range = srcRanges[i]
+      if (range && Number.isInteger(range.start) && Number.isInteger(range.end)) {
+        el.dataset.srcLine = String(range.start)
+        el.dataset.srcStart = String(range.start)
+        el.dataset.srcEnd = String(range.end)
+      } else {
+        delete el.dataset.srcLine
+        delete el.dataset.srcStart
+        delete el.dataset.srcEnd
+      }
+    }
+  }
+
+  const mapListByStableOrder = (elements) => {
+    const ranges = listSrc.map((line) => ({ start: line, end: line }))
+    mapBySequence(elements, ranges)
   }
 
   const domHeadings = Array.from(markdownBody.querySelectorAll('h1, h2, h3, h4'))
   let hCursor = 0
   for (const el of domHeadings) {
     const level = Number(el.tagName[1])
-    const text = normalizeCompareText(el.textContent)
-    let found = -1
+    let src = undefined
     for (let j = hCursor; j < headingSrc.length; j++) {
-      const c = headingSrc[j]
-      if (c.level !== level) continue
-      if (c.text === text || c.text.includes(text) || text.includes(c.text)) {
-        found = j
-        break
-      }
+      if (headingSrc[j].level !== level) continue
+      src = headingSrc[j].line
+      hCursor = j + 1
+      break
     }
-    if (found >= 0) {
-      el.dataset.srcLine = String(headingSrc[found].line)
-      hCursor = found + 1
+    if (Number.isInteger(src)) {
+      el.dataset.srcLine = String(src)
+      el.dataset.srcStart = String(src)
+      el.dataset.srcEnd = String(src)
     } else {
       delete el.dataset.srcLine
+      delete el.dataset.srcStart
+      delete el.dataset.srcEnd
     }
   }
 
-  const domLis = Array.from(markdownBody.querySelectorAll('li'))
-  let lCursor = 0
-  for (const el of domLis) {
-    const text = normalizeCompareText(getListOwnText(el))
-    let found = -1
-    for (let j = lCursor; j < listSrc.length; j++) {
-      const c = listSrc[j]
-      if (c.text === text || c.text.includes(text) || text.includes(c.text)) {
-        found = j
-        break
+  mapListByStableOrder(Array.from(markdownBody.querySelectorAll('li')))
+  mapBySequence(Array.from(markdownBody.querySelectorAll('p')), paraSrc)
+  mapBySequence(Array.from(markdownBody.querySelectorAll('blockquote')), quoteSrc)
+  mapBySequence(Array.from(markdownBody.querySelectorAll('pre')), preSrc)
+  mapBySequence(Array.from(markdownBody.querySelectorAll('hr')), hrSrc)
+  mapBySequence(Array.from(markdownBody.querySelectorAll('table')), tableSrc)
+
+  // NOTE: li 매핑은 원문 순서를 절대 유지하면서 근거리 텍스트만 보조로 사용한다.
+}
+
+function applyLineGuideMarkers(content) {
+  void content
+  Array.from(markdownBody.querySelectorAll('.line-gap-placeholder')).forEach((el) => el.remove())
+  const blocks = Array.from(markdownBody.querySelectorAll('h1, h2, h3, h4, h5, h6, p, li, blockquote, pre, table, hr'))
+  blocks.forEach((el) => {
+    const nestedParagraph = el.tagName === 'P' && !!el.closest('li, blockquote, td, th')
+    if (nestedParagraph) {
+      el.classList.remove('has-line-guide')
+      delete el.dataset.lineNo
+      return
+    }
+    const src = Number(el.dataset.srcLine)
+    const start = Number(el.dataset.srcStart)
+    const end = Number(el.dataset.srcEnd)
+    if (Number.isInteger(src) && src >= 0) {
+      el.classList.add('has-line-guide')
+      if (Number.isInteger(start) && Number.isInteger(end) && end > start) {
+        el.dataset.lineNo = `${start + 1}~${end + 1}`
+      } else {
+        el.dataset.lineNo = String(src + 1)
       }
-    }
-    if (found >= 0) {
-      el.dataset.srcLine = String(listSrc[found].line)
-      lCursor = found + 1
     } else {
-      delete el.dataset.srcLine
+      el.classList.remove('has-line-guide')
+      delete el.dataset.lineNo
     }
+  })
+
+  // 정확도 우선: 가짜 라인 생성 방지를 위해 placeholder 번호 생성은 비활성화.
+}
+
+function renderLineGutter() {
+  if (!lineGutter) return
+  lineGutter.style.display = 'none'
+  lineGutter.innerHTML = ''
+}
+
+function resetTableMarkerMergeView() {
+  const hiddenCells = markdownBody.querySelectorAll('td.marker-merged, th.marker-merged')
+  hiddenCells.forEach((cell) => {
+    cell.style.display = ''
+    cell.classList.remove('marker-merged')
+  })
+
+  const mergedAnchors = markdownBody.querySelectorAll('td[data-merge-orig-colspan], th[data-merge-orig-colspan], td[data-merge-orig-rowspan], th[data-merge-orig-rowspan]')
+  mergedAnchors.forEach((cell) => {
+    if (cell.dataset.mergeOrigColspan !== undefined) {
+      const raw = cell.dataset.mergeOrigColspan
+      if (!raw || raw === '1') cell.removeAttribute('colspan')
+      else cell.setAttribute('colspan', raw)
+      delete cell.dataset.mergeOrigColspan
+    }
+    if (cell.dataset.mergeOrigRowspan !== undefined) {
+      const raw = cell.dataset.mergeOrigRowspan
+      if (!raw || raw === '1') cell.removeAttribute('rowspan')
+      else cell.setAttribute('rowspan', raw)
+      delete cell.dataset.mergeOrigRowspan
+    }
+  })
+}
+
+function increaseCellSpan(cell, axis, amount = 1) {
+  if (!cell || amount <= 0) return
+  if (axis === 'col') {
+    if (cell.dataset.mergeOrigColspan === undefined) {
+      cell.dataset.mergeOrigColspan = cell.getAttribute('colspan') || '1'
+    }
+    const current = Number(cell.getAttribute('colspan') || '1')
+    cell.setAttribute('colspan', String(Math.max(1, current + amount)))
+    return
   }
+  if (cell.dataset.mergeOrigRowspan === undefined) {
+    cell.dataset.mergeOrigRowspan = cell.getAttribute('rowspan') || '1'
+  }
+  const current = Number(cell.getAttribute('rowspan') || '1')
+  cell.setAttribute('rowspan', String(Math.max(1, current + amount)))
+}
+
+function applyTableMarkerMergeView() {
+  resetTableMarkerMergeView()
+  if (!isReadMode) return
+
+  const tables = Array.from(markdownBody.querySelectorAll('table'))
+  tables.forEach((table) => {
+    const rows = Array.from(table.querySelectorAll('tr'))
+    let prevAnchors = []
+
+    rows.forEach((row) => {
+      const cells = Array.from(row.children).filter((el) => el.tagName === 'TD' || el.tagName === 'TH')
+      const currAnchors = []
+      let logicalCol = 0
+
+      cells.forEach((cell) => {
+        const colspan = Math.max(1, Number(cell.getAttribute('colspan') || '1') || 1)
+        const marker = String(cell.textContent || '').replace(/\u00A0/g, ' ').trim().toUpperCase()
+
+        if (marker === '=CS=') {
+          const leftAnchor = currAnchors[logicalCol - 1]
+          if (leftAnchor) {
+            increaseCellSpan(leftAnchor, 'col', colspan)
+            cell.style.display = 'none'
+            cell.classList.add('marker-merged')
+            for (let i = 0; i < colspan; i++) currAnchors[logicalCol + i] = leftAnchor
+          } else {
+            for (let i = 0; i < colspan; i++) currAnchors[logicalCol + i] = cell
+          }
+          logicalCol += colspan
+          return
+        }
+
+        if (marker === '=RS=') {
+          const upAnchor = prevAnchors[logicalCol]
+          if (upAnchor) {
+            increaseCellSpan(upAnchor, 'row', 1)
+            cell.style.display = 'none'
+            cell.classList.add('marker-merged')
+            for (let i = 0; i < colspan; i++) currAnchors[logicalCol + i] = upAnchor
+          } else {
+            for (let i = 0; i < colspan; i++) currAnchors[logicalCol + i] = cell
+          }
+          logicalCol += colspan
+          return
+        }
+
+        for (let i = 0; i < colspan; i++) currAnchors[logicalCol + i] = cell
+        logicalCol += colspan
+      })
+
+      prevAnchors = currAnchors
+    })
+  })
+}
+
+function getCurrentSourceLineFromSelection() {
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0) return -1
+  const node = selection.focusNode
+  const target = node && node.nodeType === Node.TEXT_NODE ? node.parentElement : node
+  const info = getLineEditInfoFromTarget(target)
+  return info && Number.isInteger(info.sourceLine) ? info.sourceLine : -1
+}
+
+function findBestBlockForSourceLine(sourceLine) {
+  const blocks = Array.from(markdownBody.querySelectorAll('[data-src-start][data-src-end]'))
+    .map((el) => ({
+      el,
+      start: Number(el.dataset.srcStart),
+      end: Number(el.dataset.srcEnd)
+    }))
+    .filter((x) => Number.isInteger(x.start) && Number.isInteger(x.end))
+    .sort((a, b) => a.start - b.start)
+  if (!blocks.length) return null
+  const inRange = blocks.find((b) => sourceLine >= b.start && sourceLine <= b.end)
+  if (inRange) return inRange.el
+  const forward = blocks.find((b) => b.start >= sourceLine)
+  if (forward) return forward.el
+  return blocks[blocks.length - 1].el
+}
+
+function jumpToSourceLine(sourceLine) {
+  const block = findBestBlockForSourceLine(sourceLine)
+  if (!block) return false
+  const targetTop = Math.max(0, block.offsetTop - Math.floor(markdownView.clientHeight * 0.35))
+  markdownView.scrollTo({ top: targetTop, behavior: 'smooth' })
+  lastJumpedSourceLine = sourceLine
+  block.classList.add('line-jump-target')
+  renderLineGutter()
+  setTimeout(() => {
+    block.classList.remove('line-jump-target')
+    renderLineGutter()
+  }, 1200)
+  return true
+}
+
+async function openGoToLineDialog() {
+  const current = getCurrentSourceLineFromSelection()
+  const initial = Number.isInteger(current) && current >= 0 ? String(current + 1) : ''
+  const value = await askTextEdit('줄 이동: 표시할 줄 번호 입력', initial)
+  if (value === null) return
+  const lineNumber = Number(String(value).trim())
+  if (!Number.isInteger(lineNumber) || lineNumber < 1) {
+    showErrorModal('줄 번호는 1 이상의 정수로 입력해 주세요.')
+    return
+  }
+  const ok = jumpToSourceLine(lineNumber - 1)
+  if (!ok) showErrorModal('해당 줄로 이동할 수 없습니다.')
 }
 
 function hideTocContextMenu() {
   tocContextMenu.style.display = 'none'
   contextTarget = null
+}
+
+function resetTocContextState(reason = '') {
+  tocContextMenu.style.display = 'none'
+  contextTarget = null
+  suppressGlobalMenuCloseUntil = 0
+  if (reason) appendDebugLog('INFO', `menu:state reset (${reason})`)
+}
+
+function snapshotActionContext(ctx) {
+  if (!ctx || typeof ctx !== 'object') return null
+  const safeTargets = Array.isArray(ctx.targets)
+    ? ctx.targets.map((t) => ({
+      targetType: t && t.targetType ? String(t.targetType) : undefined,
+      sourceLine: Number.isInteger(Number(t && t.sourceLine)) ? Number(t.sourceLine) : undefined,
+      tocIndex: Number.isInteger(Number(t && t.tocIndex)) ? Number(t.tocIndex) : undefined,
+      listIndex: Number.isInteger(Number(t && t.listIndex)) ? Number(t.listIndex) : undefined,
+      listText: t && typeof t.listText === 'string' ? t.listText : undefined
+    }))
+    : []
+  const safeDebugBlocks = Array.isArray(ctx.debugBlocks)
+    ? ctx.debugBlocks.map((b) => ({
+      sourceLine: Number.isInteger(Number(b && b.sourceLine)) ? Number(b.sourceLine) : undefined,
+      text: b && typeof b.text === 'string' ? b.text : ''
+    }))
+    : []
+  const safeTableContext = ctx.tableContext && typeof ctx.tableContext === 'object'
+    ? {
+      tableIndex: Number.isInteger(Number(ctx.tableContext.tableIndex)) ? Number(ctx.tableContext.tableIndex) : undefined,
+      rowIndex: Number.isInteger(Number(ctx.tableContext.rowIndex)) ? Number(ctx.tableContext.rowIndex) : undefined,
+      cellIndex: Number.isInteger(Number(ctx.tableContext.cellIndex)) ? Number(ctx.tableContext.cellIndex) : undefined
+    }
+    : undefined
+  return {
+    kind: ctx.kind,
+    targetType: ctx.targetType,
+    sourceLine: Number.isInteger(Number(ctx.sourceLine)) ? Number(ctx.sourceLine) : undefined,
+    level: Number.isInteger(Number(ctx.level)) ? Number(ctx.level) : undefined,
+    bulletDepth: Number.isInteger(Number(ctx.bulletDepth)) ? Number(ctx.bulletDepth) : undefined,
+    promoteHeadingLevel: Number.isInteger(Number(ctx.promoteHeadingLevel)) ? Number(ctx.promoteHeadingLevel) : undefined,
+    tocIndex: Number.isInteger(Number(ctx.tocIndex)) ? Number(ctx.tocIndex) : undefined,
+    scope: ctx.scope === 'group' ? 'group' : 'single',
+    needsConfirm: !!ctx.needsConfirm,
+    selectedText: typeof ctx.selectedText === 'string' ? ctx.selectedText : '',
+    allowedActions: Array.isArray(ctx.allowedActions) ? ctx.allowedActions.slice() : [],
+    targets: safeTargets,
+    debugBlocks: safeDebugBlocks,
+    tableContext: safeTableContext
+  }
+}
+
+function stabilizeMenuUi(reason = '') {
+  try {
+    tocContextMenu.style.pointerEvents = 'auto'
+    const activeEl = document.activeElement
+    if (activeEl && typeof activeEl.blur === 'function') {
+      activeEl.blur()
+    }
+    tocContextMenuItems.forEach((btn) => {
+      if (btn && typeof btn.blur === 'function') btn.blur()
+    })
+    suppressGlobalMenuCloseUntil = 0
+    if (reason) appendDebugLog('INFO', `menu:ui stabilized (${reason})`)
+  } catch (_) {}
 }
 
 function hideReadContextMenu() {
@@ -428,6 +922,7 @@ function updateReadMenuButtons() {
 }
 
 function showReadContextMenu(x, y) {
+  suppressGlobalMenuCloseUntil = Date.now() + 250
   updateReadMenuButtons()
   readContextMenuStatus.textContent = '읽기 모드 옵션'
   readContextMenu.style.display = 'block'
@@ -441,6 +936,7 @@ function showReadContextMenu(x, y) {
 }
 
 function showLabelContextMenu(x, y, contextInfo = {}) {
+  suppressGlobalMenuCloseUntil = Date.now() + 250
   labelContextTarget = contextInfo
   labelContextMenu.style.display = 'block'
   const menuWidth = labelContextMenu.offsetWidth || 150
@@ -466,6 +962,7 @@ function updateAdvancedMenuToggleUi() {
 
 function collectUiSettings() {
   return {
+    lastOpenedFilePath,
     readMode: isReadMode,
     advancedMenu,
     readHideLabels,
@@ -482,6 +979,7 @@ async function saveUiSettings() {
 }
 
 function applyUiSettings(settings = {}) {
+  lastOpenedFilePath = typeof settings.lastOpenedFilePath === 'string' ? settings.lastOpenedFilePath : ''
   advancedMenu = !!settings.advancedMenu
   readHideLabels = !!settings.readHideLabels
   readAutoCopy = !!settings.readAutoCopy
@@ -496,9 +994,23 @@ function applyUiSettings(settings = {}) {
 async function loadUiSettings() {
   try {
     const result = await ipcRenderer.invoke('settings:get')
-    if (!result?.ok || !result.settings) return
+    if (!result?.ok || !result.settings) return null
     applyUiSettings(result.settings)
-  } catch (_) {}
+    return result.settings
+  } catch (_) {
+    return null
+  }
+}
+
+async function loadAppVersion() {
+  if (!appVersion) return
+  try {
+    const result = await ipcRenderer.invoke('app:getVersion')
+    if (result?.ok && result.version) appVersion.textContent = `v${result.version}`
+    else appVersion.textContent = 'v-'
+  } catch (_) {
+    appVersion.textContent = 'v-'
+  }
 }
 
 function decorateLabelsForDisplay(content) {
@@ -702,14 +1214,20 @@ function inferSourceLineFromText(content, rawText) {
 
 function getLineEditInfoFromTarget(targetEl) {
   if (!targetEl || !markdownBody.contains(targetEl)) return null
+  const li = targetEl.closest('li')
+  if (li) {
+    const liSrc = Number(li.dataset.srcLine)
+    if (Number.isInteger(liSrc)) return { sourceLine: liSrc }
+  }
+  const heading = targetEl.closest('h1, h2, h3, h4')
+  if (heading) {
+    const headingSrc = Number(heading.dataset.srcLine)
+    if (Number.isInteger(headingSrc)) return { sourceLine: headingSrc }
+  }
   const srcHolder = targetEl.closest('[data-src-line]')
   const directSrc = srcHolder ? Number(srcHolder.dataset.srcLine) : NaN
   if (Number.isInteger(directSrc)) return { sourceLine: directSrc }
-  const block = targetEl.closest(BLOCK_SELECTORS)
-  if (!block) return null
-  const inferred = inferSourceLineFromText(workingContent, block.textContent || '')
-  if (!Number.isInteger(inferred) || inferred < 0) return null
-  return { sourceLine: inferred }
+  return null
 }
 
 function parseMarkdownTableBlocks(content) {
@@ -827,12 +1345,17 @@ function setReadMode(nextReadMode) {
   if (modeText) modeText.textContent = isReadMode ? '읽기모드' : '편집모드'
   document.body.classList.toggle('read-mode', isReadMode)
   applyReadVisualOptions()
+  applyTableMarkerMergeView()
   hideAllContextMenus()
+  renderLineGutter()
 }
 
 function showTocContextMenu(x, y, contextInfo = {}) {
+  suppressGlobalMenuCloseUntil = Date.now() + 250
   contextTarget = contextInfo
+  lastMenuActionContext = snapshotActionContext(contextInfo)
   tocContextMenu.style.display = 'block'
+  tocContextMenu.style.pointerEvents = 'auto'
 
   const menuWidth = tocContextMenu.offsetWidth || 150
   const menuHeight = tocContextMenu.offsetHeight || 156
@@ -851,13 +1374,22 @@ function showTocContextMenu(x, y, contextInfo = {}) {
     selectedText = '',
     debugBlocks = []
   } = contextInfo
+  const line = resolveEditableLineFromContext(contextInfo)
+  const lineText = Number.isInteger(line) && line >= 0 ? String(line + 1) : '?'
+  appendDebugLog(
+    'INFO',
+    `menu:open kind=${kind} line=${lineText} actions=${(allowedActions || []).join(',') || '(none)'}`
+  )
   tocContextMenuStatus.textContent = buildContextStatusText(contextInfo)
 
   tocContextMenuItems.forEach((btn) => {
     const action = btn.dataset.action
     const enabled = allowedActions.includes(action)
-    btn.disabled = !enabled
+    btn.disabled = false
+    btn.dataset.enabled = enabled ? '1' : '0'
+    btn.classList.toggle('is-disabled', !enabled)
     btn.style.display = enabled || advancedMenu ? 'block' : 'none'
+    btn.style.pointerEvents = 'auto'
   })
 
   const debugText = String(selectedText || '').replace(/\s+/g, ' ').trim()
@@ -966,20 +1498,36 @@ function resolveEditableLineFromContext(ctx) {
     if (fromTargets) return Number(fromTargets.sourceLine)
   }
 
-  const fromSelection = inferSourceLineFromText(workingContent, ctx.selectedText || '')
-  if (Number.isInteger(fromSelection) && fromSelection >= 0) return fromSelection
-
   if (Array.isArray(ctx.debugBlocks)) {
     const fromDebug = ctx.debugBlocks.find((b) => Number.isInteger(Number(b && b.sourceLine)))
     if (fromDebug) return Number(fromDebug.sourceLine)
-    const inferred = inferSourceLineFromText(
-      workingContent,
-      ctx.debugBlocks.map((b) => (b && b.text ? b.text : '')).join(' ')
-    )
-    if (Number.isInteger(inferred) && inferred >= 0) return inferred
   }
 
   return -1
+}
+
+function toSerializableTransformTarget(ctx) {
+  if (!ctx || typeof ctx !== 'object') return null
+  const out = {
+    targetType: ctx.targetType,
+    kind: ctx.kind,
+    level: Number.isInteger(Number(ctx.level)) ? Number(ctx.level) : undefined,
+    bulletDepth: Number.isInteger(Number(ctx.bulletDepth)) ? Number(ctx.bulletDepth) : undefined,
+    promoteHeadingLevel: Number.isInteger(Number(ctx.promoteHeadingLevel)) ? Number(ctx.promoteHeadingLevel) : undefined,
+    sourceLine: Number.isInteger(Number(ctx.sourceLine)) ? Number(ctx.sourceLine) : undefined,
+    tocIndex: Number.isInteger(Number(ctx.tocIndex)) ? Number(ctx.tocIndex) : undefined
+  }
+
+  if (Array.isArray(ctx.targets)) {
+    out.targets = ctx.targets.map((t) => ({
+      targetType: t && t.targetType ? String(t.targetType) : undefined,
+      sourceLine: Number.isInteger(Number(t && t.sourceLine)) ? Number(t.sourceLine) : undefined,
+      tocIndex: Number.isInteger(Number(t && t.tocIndex)) ? Number(t.tocIndex) : undefined,
+      listIndex: Number.isInteger(Number(t && t.listIndex)) ? Number(t.listIndex) : undefined,
+      listText: t && typeof t.listText === 'string' ? t.listText : undefined
+    }))
+  }
+  return out
 }
 
 function editTableCellAtContext(tableContext) {
@@ -1114,7 +1662,9 @@ function renderMarkdown(content) {
   }
 
   markdownBody.innerHTML = marked.parse(decorateLabelsForDisplay(content))
+  applyTableMarkerMergeView()
   annotateSourceLines(content)
+  applyLineGuideMarkers(content)
   buildToc()
 
   requestAnimationFrame(() => {
@@ -1122,6 +1672,7 @@ function renderMarkdown(content) {
       markdownView.scrollTop = markdownView.scrollHeight * scrollRatio
     }
     updateActiveToc()
+    renderLineGutter()
   })
 }
 
@@ -1132,19 +1683,45 @@ function showFile(data) {
 
   filePath.textContent = data.filePath
   filePath.title = data.filePath
-  appTitle.textContent = `mdSee — ${data.fileName}`
+  appTitle.textContent = `mdSee - ${data.fileName}`
   currentFilePath = data.filePath
+  lastOpenedFilePath = data.filePath
   diskContent = data.content
   workingContent = data.content
   setDirty(false)
 
   renderMarkdown(workingContent)
+  saveUiSettings()
 }
 
-setReadMode(false)
-updateAdvancedMenuToggleUi()
-updateReadMenuButtons()
-loadUiSettings()
+async function initializeAppState() {
+  setReadMode(false)
+  updateAdvancedMenuToggleUi()
+  updateReadMenuButtons()
+  const settings = await loadUiSettings()
+  loadAppVersion()
+
+  const cachedPath = settings && typeof settings.lastOpenedFilePath === 'string'
+    ? settings.lastOpenedFilePath
+    : ''
+  if (!cachedPath) {
+    appendDebugLog('INFO', 'startup: no last file cache')
+    return
+  }
+
+  try {
+    const restored = await ipcRenderer.invoke('file:restoreLast', { filePath: cachedPath })
+    if (restored && restored.ok) {
+      appendDebugLog('INFO', `startup: restored last file ${cachedPath}`)
+    } else {
+      appendDebugLog('INFO', `startup: last file not restored (${restored && restored.code ? restored.code : 'UNKNOWN'})`)
+    }
+  } catch (err) {
+    appendDebugLog('ERROR', `startup: restore failed ${err && err.message ? err.message : 'unknown'}`)
+  }
+}
+
+initializeAppState()
 
 if (modeSwitch) {
   modeSwitch.addEventListener('change', () => {
@@ -1216,6 +1793,11 @@ ipcRenderer.on('file:changed', (_, data) => {
 ipcRenderer.on('file:error', (_, msg) => {
   showErrorModal(msg)
 })
+ipcRenderer.on('debug:log', (_, data) => {
+  const level = data && data.level ? data.level : 'INFO'
+  const message = data && data.message ? data.message : ''
+  appendDebugLog(level, `main ${message}`)
+})
 
 // 버튼 이벤트
 btnOpen.addEventListener('click', () => openFileDialogWithDirtyCheck())
@@ -1223,6 +1805,33 @@ btnOpenLarge.addEventListener('click', () => openFileDialogWithDirtyCheck())
 btnSave.addEventListener('click', async () => {
   await saveCurrentFile()
 })
+if (btnMoveLine) {
+  btnMoveLine.addEventListener('click', () => {
+    openGoToLineDialog()
+  })
+}
+if (btnConsoleToggle) {
+  btnConsoleToggle.addEventListener('click', () => {
+    setConsoleVisibility(!isConsoleVisible)
+  })
+}
+if (btnConsoleClear) {
+  btnConsoleClear.addEventListener('click', () => {
+    if (debugConsoleBody) debugConsoleBody.textContent = ''
+    appendDebugLog('INFO', '콘솔을 비웠습니다.')
+  })
+}
+if (btnConsoleCopy) {
+  btnConsoleCopy.addEventListener('click', async () => {
+    const text = debugConsoleBody ? (debugConsoleBody.innerText || '').trim() : ''
+    if (!text) {
+      appendDebugLog('INFO', '복사할 콘솔 내용이 없습니다.')
+      return
+    }
+    const ok = await copyTextToClipboard(text)
+    appendDebugLog(ok ? 'INFO' : 'ERROR', ok ? '콘솔 내용을 복사했습니다.' : '콘솔 복사에 실패했습니다.')
+  })
+}
 
 // 타이틀바 버튼
 btnMinimize.addEventListener('click', () => ipcRenderer.send('window:minimize'))
@@ -1309,71 +1918,84 @@ tocList.addEventListener('click', () => tocList.focus())
 // 뷰어 우클릭 시 선택 텍스트 기준으로 메뉴 표시
 markdownView.addEventListener('contextmenu', (e) => {
   if (!markdownView.contains(e.target)) return
-  if (isReadMode) {
+  appendDebugLog('INFO', 'view:contextmenu event')
+  try {
+    resetTocContextState('pre-open')
+    if (activeInlineEditor) {
+      appendDebugLog('INFO', 'view:contextmenu finishing active inline editor')
+      finishInlineEditor(true)
+    }
+    // 기본 브라우저 메뉴는 항상 막고, 앱 메뉴가 안 뜨는 이유를 로그로 남긴다.
     e.preventDefault()
-    hideTocContextMenu()
-    showReadContextMenu(e.clientX, e.clientY)
-    return
-  }
-
-  const labelEl = e.target && e.target.closest ? e.target.closest('.md-label') : null
-  if (labelEl) {
-    const lineInfo = getLineEditInfoFromTarget(labelEl)
-    if (lineInfo && Number.isInteger(lineInfo.sourceLine)) {
-      e.preventDefault()
+    if (isReadMode) {
       hideTocContextMenu()
-      showLabelContextMenu(e.clientX, e.clientY, {
-        sourceLine: lineInfo.sourceLine
-      })
+      showReadContextMenu(e.clientX, e.clientY)
+      appendDebugLog('INFO', 'view:contextmenu read-mode menu shown')
       return
     }
-  }
 
-  const tableCell = e.target && e.target.closest ? e.target.closest('td, th') : null
-  if (tableCell) {
-    const table = tableCell.closest('table')
-    const allTables = Array.from(markdownBody.querySelectorAll('table'))
-    const tableIndex = allTables.findIndex((t) => t === table)
-    const row = tableCell.parentElement
-    const rowIndex = row ? Array.from(table.rows).indexOf(row) : -1
-    const cellIndex = tableCell.cellIndex
-    if (tableIndex >= 0 && rowIndex >= 0 && cellIndex >= 0) {
-      e.preventDefault()
-      showTocContextMenu(e.clientX, e.clientY, {
-        kind: 'table',
-        targetType: 'table',
-        tableContext: { tableIndex, rowIndex, cellIndex },
-        anchorElement: tableCell,
-        selectedText: (tableCell.textContent || '').trim(),
-        debugBlocks: [{
-          text: `table:${tableIndex + 1} row:${rowIndex + 1} col:${cellIndex + 1}`
-        }],
-        allowedActions: ['editContent']
-      })
-      return
+    const labelEl = e.target && e.target.closest ? e.target.closest('.md-label') : null
+    if (labelEl && e.altKey) {
+      const lineInfo = getLineEditInfoFromTarget(labelEl)
+      if (lineInfo && Number.isInteger(lineInfo.sourceLine)) {
+        hideTocContextMenu()
+        showLabelContextMenu(e.clientX, e.clientY, {
+          sourceLine: lineInfo.sourceLine
+        })
+        appendDebugLog('INFO', `view:contextmenu label menu line=${lineInfo.sourceLine + 1} (alt)`)
+        return
+      }
     }
-  }
 
-  const selection = window.getSelection()
-  const selectedText = selection ? selection.toString().trim() : ''
-  const range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null
+    const tableCell = e.target && e.target.closest ? e.target.closest('td, th') : null
+    if (tableCell) {
+      const table = tableCell.closest('table')
+      const allTables = Array.from(markdownBody.querySelectorAll('table'))
+      const tableIndex = allTables.findIndex((t) => t === table)
+      const row = tableCell.parentElement
+      const rowIndex = row ? Array.from(table.rows).indexOf(row) : -1
+      const cellIndex = tableCell.cellIndex
+      if (tableIndex >= 0 && rowIndex >= 0 && cellIndex >= 0) {
+        showTocContextMenu(e.clientX, e.clientY, {
+          kind: 'table',
+          targetType: 'table',
+          tableContext: { tableIndex, rowIndex, cellIndex },
+          anchorElement: tableCell,
+          selectedText: (tableCell.textContent || '').trim(),
+          debugBlocks: [{
+            text: `table:${tableIndex + 1} row:${rowIndex + 1} col:${cellIndex + 1}`
+          }],
+          allowedActions: ['editContent']
+        })
+        appendDebugLog('INFO', `view:contextmenu table menu t=${tableIndex + 1} r=${rowIndex + 1} c=${cellIndex + 1}`)
+        return
+      }
+    }
 
-  if (!selectedText || !range) {
+    const selection = window.getSelection()
+    const selectedText = selection ? selection.toString().trim() : ''
+    const range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null
+
+    // 원문 라인 기준 우선: 선택 라인이 있으면 해당 라인 태그 범위로 컨텍스트를 구성한다.
     const lineInfo = getLineEditInfoFromTarget(e.target)
     if (lineInfo && Number.isInteger(lineInfo.sourceLine)) {
-      e.preventDefault()
+      const ctx = buildLineBasedContext(lineInfo.sourceLine, e.target, selectedText)
+      if (ctx) {
+        showTocContextMenu(e.clientX, e.clientY, ctx)
+        appendDebugLog('INFO', `view:contextmenu line ctx line=${lineInfo.sourceLine + 1}`)
+        return
+      }
+    }
+
+    if (!selectedText || !range) {
+      appendDebugLog('INFO', 'view:contextmenu no selection/no range; fallback menu')
       showTocContextMenu(e.clientX, e.clientY, {
         kind: 'text',
         targetType: 'line',
-        sourceLine: lineInfo.sourceLine,
-        anchorElement: e.target.closest ? e.target.closest(BLOCK_SELECTORS) : null,
-        selectedText: (e.target && e.target.textContent ? e.target.textContent : '').trim(),
-        debugBlocks: [{ sourceLine: lineInfo.sourceLine, text: `line:${lineInfo.sourceLine + 1}` }],
-        allowedActions: ['editContent']
+        allowedActions: []
       })
+      return
     }
-    return
-  }
 
   const compactSelected = selectedText.replace(/\s+/g, '')
   const isBulletOnlySelection =
@@ -1471,10 +2093,8 @@ markdownView.addEventListener('contextmenu', (e) => {
       .map((node) => {
         const listIndex = allLis.findIndex((li) => li === node)
         if (listIndex < 0) return null
-        const fromDataset = Number(node.dataset.srcLine)
+        const sourceLine = Number(node.dataset.srcLine)
         const ownText = getListOwnText(node)
-        const inferred = inferListSourceLine(workingContent, ownText)
-        const sourceLine = Number.isInteger(fromDataset) ? fromDataset : inferred
         return {
           targetType: 'list',
           listIndex,
@@ -1485,10 +2105,8 @@ markdownView.addEventListener('contextmenu', (e) => {
       .filter(Boolean)
     if (!targets.length) return
     const debugBlocks = targetLis.map((node) => {
-      const fromDataset = Number(node.dataset.srcLine)
+      const sourceLine = Number(node.dataset.srcLine)
       const ownText = getListOwnText(node)
-      const inferred = inferListSourceLine(workingContent, ownText)
-      const sourceLine = Number.isInteger(fromDataset) ? fromDataset : inferred
       return {
         sourceLine: Number.isInteger(sourceLine) ? sourceLine : undefined,
         text: ownText
@@ -1518,18 +2136,11 @@ markdownView.addEventListener('contextmenu', (e) => {
     return
   }
 
-  const lineInfo = getLineEditInfoFromTarget(e.target)
-  if (lineInfo && Number.isInteger(lineInfo.sourceLine)) {
-    e.preventDefault()
-    showTocContextMenu(e.clientX, e.clientY, {
-      kind: 'text',
-      targetType: 'line',
-      sourceLine: lineInfo.sourceLine,
-      anchorElement: e.target.closest ? e.target.closest(BLOCK_SELECTORS) : null,
-      selectedText,
-      debugBlocks: [{ sourceLine: lineInfo.sourceLine, text: `line:${lineInfo.sourceLine + 1}` }],
-      allowedActions: ['editContent']
-    })
+    // fallthrough: no menu
+    appendDebugLog('INFO', 'view:contextmenu fallthrough no menu match')
+  } catch (err) {
+    appendDebugLog('ERROR', `view:contextmenu error ${err && err.message ? err.message : 'unknown'}`)
+    showErrorModal(`우클릭 메뉴 오류\n\n${err && err.message ? err.message : 'unknown error'}`)
   }
 })
 
@@ -1541,87 +2152,167 @@ markdownView.addEventListener('keyup', () => {
   handleReadSelectionUpdate()
 })
 
+markdownView.addEventListener('scroll', () => {
+  renderLineGutter()
+}, { passive: true })
+
 markdownView.addEventListener('dblclick', () => {
   if (!isReadMode) return
   clearReadSelection()
 })
 
 // TOC 우클릭 메뉴 동작
+tocContextMenu.addEventListener('contextmenu', (e) => {
+  // 메뉴 위에서 다시 우클릭해도 브라우저 기본 컨텍스트가 뜨지 않게 막는다.
+  e.preventDefault()
+})
+
+tocContextMenu.addEventListener('pointerup', (e) => {
+  const item = e.target.closest('[data-action]')
+  if (!item) return
+  const clickType = e.button === 2 ? 'right' : 'left'
+  appendDebugLog('INFO', `menu:${item.dataset.action || '?'} ${clickType}-pointerup execute`)
+  // 일부 환경에서 click 누락이 있어 pointerup에서 실행을 보강한다.
+  item.click()
+})
+
 tocContextMenu.addEventListener('click', async (e) => {
   const target = e.target.closest('[data-action]')
-  if (!target) return
-
-  const action = target.dataset.action
-  if (!action) return
-  if (!contextTarget) return
-
-  if (action === 'editContent') {
-    if (contextTarget.tableContext) {
-      const tableContext = contextTarget.tableContext
-      hideTocContextMenu()
-      await editTableCellAtContext(tableContext)
-      return
-    }
-    const line = resolveEditableLineFromContext(contextTarget)
-    if (Number.isInteger(line) && line >= 0) {
-      const anchorElement = contextTarget.anchorElement || null
-      hideTocContextMenu()
-      editLineBySourceLine(line, anchorElement)
-      return
-    }
-    hideTocContextMenu()
-    showErrorModal('편집할 내용을 찾지 못했습니다. 대상을 다시 선택한 뒤 시도해 주세요.')
+  if (!target) {
+    appendDebugLog('INFO', 'menu:click ignored (no action target)')
+    resetTocContextState('empty-click')
     return
   }
 
-  if (!currentFilePath) return
+  const action = target.dataset.action
+  if (!action) {
+    appendDebugLog('INFO', 'menu:click ignored (empty action)')
+    resetTocContextState('empty-action')
+    return
+  }
+  if (target.dataset.enabled === '0') {
+    appendDebugLog('INFO', `menu:${action} ignored (disabled for current context)`)
+    resetTocContextState('disabled-action')
+    return
+  }
+  if (!contextTarget && !lastMenuActionContext) {
+    appendDebugLog('ERROR', `menu:${action} blocked (context missing)`)
+    resetTocContextState('context-missing')
+    return
+  }
+  const actionContext = contextTarget || lastMenuActionContext
+  const rawLine = resolveEditableLineFromContext(actionContext)
+  const rawLineText = Number.isInteger(rawLine) && rawLine >= 0 ? String(rawLine + 1) : '?'
+  appendDebugLog('INFO', `menu:${action} clicked line=${rawLineText}`)
+
+  if (action === 'editContent') {
+    if (actionContext.tableContext) {
+      const tableContext = actionContext.tableContext
+      resetTocContextState('edit-table')
+      await editTableCellAtContext(tableContext)
+      return
+    }
+    const line = resolveEditableLineFromContext(actionContext)
+    if (Number.isInteger(line) && line >= 0) {
+      const anchorElement = actionContext.anchorElement || null
+      resetTocContextState('edit-line')
+      editLineBySourceLine(line, anchorElement)
+      return
+    }
+    resetTocContextState('edit-line-missing')
+    showErrorModal('편집할 내용을 찾지 못했습니다. 대상을 다시 선택한 뒤 시도해 주세요.')
+    appendDebugLog('ERROR', 'menu:editContent failed (editable line not found)')
+    return
+  }
+
+  if (!currentFilePath) {
+    appendDebugLog('ERROR', `menu:${action} blocked (currentFilePath missing)`)
+    resetTocContextState('file-missing')
+    return
+  }
 
   const forcePromoteConfirm =
     action === 'shiftUp' &&
-    (contextTarget.kind === 'bullet' || contextTarget.kind === 'numbered') &&
-    contextTarget.bulletDepth === 1
+    (actionContext.kind === 'bullet' || actionContext.kind === 'numbered') &&
+    actionContext.bulletDepth === 1
 
   if (forcePromoteConfirm) {
-    const level = Number.isInteger(contextTarget.promoteHeadingLevel) ? contextTarget.promoteHeadingLevel : 2
+    const level = Number.isInteger(actionContext.promoteHeadingLevel) ? actionContext.promoteHeadingLevel : 2
     const ok = await askConfirm(`최상위 블릿입니다. 헤더 H${level}로 이동합니다.`)
     if (!ok) {
-      hideTocContextMenu()
+      appendDebugLog('INFO', `menu:${action} canceled by user (force promote confirm)`)
+      resetTocContextState('confirm-cancel')
       return
     }
-  } else if (contextTarget.needsConfirm) {
+  } else if (actionContext.needsConfirm) {
     const actionLabelMap = {
       shiftUp: '위계 한 단계 위로',
       shiftDown: '위계 한 단계 아래로',
       toBullet: '헤더 -> 블릿',
       toHeading: '블릿 -> 헤더'
     }
-    const modeLabel = contextTarget.scope === 'group' ? '그룹 이동' : '나혼자 이동'
+    const modeLabel = actionContext.scope === 'group' ? '그룹 이동' : '나혼자 이동'
     const ok = await askConfirm(
       `${actionLabelMap[action] || action}을(를) 진행할까요?\n현재 모드: ${modeLabel}`
     )
     if (!ok) {
-      hideTocContextMenu()
+      appendDebugLog('INFO', `menu:${action} canceled by user (confirm dialog)`)
+      resetTocContextState('confirm-cancel')
       return
     }
   }
 
-  const result = await ipcRenderer.invoke('file:transformTree', {
-    filePath: currentFilePath,
-    action,
-    target: contextTarget,
-    scope: contextTarget.scope || 'single',
-    currentContent: workingContent
-  })
+  appendDebugLog('INFO', `tree:${action} request start`)
+  const serialTarget = toSerializableTransformTarget(actionContext)
+  if (!serialTarget) {
+    appendDebugLog('ERROR', `tree:${action} blocked (serial target missing)`)
+    showErrorModal('위계 이동 요청을 만들 수 없습니다.')
+    resetTocContextState('serial-target-missing')
+    return
+  }
+  let result = null
+  try {
+    result = await invokeWithTimeout('file:transformTree', {
+      filePath: currentFilePath,
+      action,
+      target: serialTarget,
+      scope: actionContext.scope || 'single',
+      currentContent: workingContent
+    }, 12000)
+    appendDebugLog('INFO', `tree:${action} response received`)
+  } catch (err) {
+    const message = err && err.message ? err.message : 'invoke failed'
+    appendDebugLog('ERROR', `tree:${action} invoke error ${message}`)
+    showErrorModal(`위계 이동 IPC 오류\n\n${message}`)
+    resetTocContextState('invoke-error')
+    return
+  }
 
   if (!result?.ok) {
-    const msg = result?.message || '위계 변경 저장에 실패했습니다.'
+    const code = result?.code || 'E_UNKNOWN'
+    const line = resolveEditableLineFromContext(actionContext)
+    const lineText = Number.isInteger(line) && line >= 0 ? String(line + 1) : '?'
+    const msg = [
+      `${result?.message || '위계 변경 저장에 실패했습니다.'}`,
+      '',
+      `오류코드: ${code}`,
+      `액션: ${action}`,
+      `라인: ${lineText}`
+    ].join('\n')
+    appendDebugLog('ERROR', `tree:${action} failed code=${code} line=${lineText} msg=${result?.message || 'unknown'}`)
     showErrorModal(msg)
+    stabilizeMenuUi('action-failed')
   } else if (typeof result.updatedContent === 'string') {
     workingContent = result.updatedContent
     setDirty(workingContent !== diskContent)
     renderMarkdown(workingContent)
+    const line = resolveEditableLineFromContext(actionContext)
+    const lineText = Number.isInteger(line) && line >= 0 ? String(line + 1) : '?'
+    appendDebugLog('INFO', `tree:${action} ok line=${lineText}`)
+    showSuccessToast(`${getActionLabel(action)} 완료 (line:${lineText})`)
+    stabilizeMenuUi('action-success')
   }
-  hideTocContextMenu()
+  resetTocContextState('action-complete')
 })
 
 labelContextMenu.addEventListener('click', (e) => {
@@ -1637,17 +2328,31 @@ labelContextMenu.addEventListener('click', (e) => {
   hideLabelContextMenu()
 })
 
-document.addEventListener('click', (e) => {
-  const inTocMenu = tocContextMenu.contains(e.target)
-  const inReadMenu = readContextMenu.contains(e.target)
-  const inLabelMenu = labelContextMenu.contains(e.target)
-  if (!inTocMenu) hideTocContextMenu()
-  if (!inReadMenu) hideReadContextMenu()
-  if (!inLabelMenu) hideLabelContextMenu()
-})
+document.addEventListener('pointerdown', (e) => {
+  const target = e.target
+  const inTocMenu = tocContextMenu.contains(target)
+  const inReadMenu = readContextMenu.contains(target)
+  const inLabelMenu = labelContextMenu.contains(target)
+  if (!inTocMenu && tocContextMenu.style.display !== 'none') {
+    resetTocContextState('outside-pointerdown')
+    appendDebugLog('INFO', 'menu:toc closed by outside pointerdown')
+  }
+  if (!inReadMenu && readContextMenu.style.display !== 'none') {
+    hideReadContextMenu()
+    appendDebugLog('INFO', 'menu:read closed by outside pointerdown')
+  }
+  if (!inLabelMenu && labelContextMenu.style.display !== 'none') {
+    hideLabelContextMenu()
+    appendDebugLog('INFO', 'menu:label closed by outside pointerdown')
+  }
+}, true)
 
-document.addEventListener('scroll', hideAllContextMenus, true)
+document.addEventListener('scroll', (e) => {
+  if (debugConsoleBody && debugConsoleBody.contains(e.target)) return
+  hideAllContextMenus()
+}, true)
 window.addEventListener('resize', hideAllContextMenus)
+window.addEventListener('resize', renderLineGutter)
 document.addEventListener('keydown', (e) => {
   if (isReadMode) return
   if (e.key === 'Alt' && contextTarget && tocContextMenu.style.display !== 'none') {
@@ -1697,6 +2402,11 @@ document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'o') {
     e.preventDefault()
     openFileDialogWithDirtyCheck()
+    return
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'g') {
+    e.preventDefault()
+    openGoToLineDialog()
   }
 })
 
@@ -1776,3 +2486,6 @@ btnErrorClose.addEventListener('click', hideErrorModal)
 errorModal.addEventListener('click', (e) => {
   if (e.target === errorModal) hideErrorModal()
 })
+
+setConsoleVisibility(true)
+appendDebugLog('INFO', '디버그 콘솔이 시작되었습니다.')

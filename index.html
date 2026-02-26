@@ -12,6 +12,7 @@
     <div class="titlebar-drag">
       <span class="app-icon">📄</span>
       <span class="app-title" id="appTitle">mdSee</span>
+      <span class="app-version" id="appVersion">v-</span>
     </div>
     <div class="titlebar-controls">
       <button class="ctrl-btn minimize" id="btnMinimize" title="최소화">─</button>
@@ -38,6 +39,12 @@
     </button>
     <button class="tool-btn" id="btnSave" title="저장 (Ctrl+S)" disabled>
       저장
+    </button>
+    <button class="tool-btn" id="btnMoveLine" title="줄 이동">
+      줄 이동
+    </button>
+    <button class="tool-btn" id="btnConsoleToggle" title="디버그 콘솔 토글">
+      콘솔
     </button>
     <label class="mode-toggle" title="읽기/편집 모드 전환">
       <input type="checkbox" id="modeSwitch">
@@ -83,10 +90,23 @@
 
       <!-- 마크다운 뷰어 -->
       <div class="markdown-view" id="markdownView">
+        <div class="line-gutter" id="lineGutter"></div>
         <div class="markdown-body" id="markdownBody"></div>
       </div>
     </div>
   </div>
+
+  <div class="debug-console" id="debugConsole">
+    <div class="debug-console-header">
+      <span class="debug-console-title">디버그 콘솔</span>
+      <div style="display:flex; gap:6px;">
+        <button class="tool-btn" id="btnConsoleCopy" title="콘솔 복사">복사</button>
+        <button class="tool-btn" id="btnConsoleClear" title="콘솔 비우기">비우기</button>
+      </div>
+    </div>
+    <pre class="debug-console-body" id="debugConsoleBody"></pre>
+  </div>
+  <div class="toast" id="actionToast" style="display:none;"></div>
 
   <div class="context-menu" id="tocContextMenu" style="display:none;">
     <div class="context-menu-status" id="tocContextMenuStatus">현재: -</div>

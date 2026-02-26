@@ -10,12 +10,20 @@ const undoHistoryByFile = new Map()
 let updateInitialized = false
 const defaultUiSettings = {
   configVersion: 1,
+  lastOpenedFilePath: '',
   readMode: false,
   advancedMenu: false,
   readHideLabels: false,
   readAutoCopy: false,
   readAutoBlockSelect: true,
   readHtmlClip: false
+}
+
+function sendDebugLog(message) {
+  try {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    mainWindow.webContents.send('debug:log', { level: 'INFO', message: String(message || '') })
+  } catch (_) {}
 }
 
 function getSettingsPath() {
@@ -26,8 +34,10 @@ function sanitizeSettings(input) {
   const src = input && typeof input === 'object' ? input : {}
   const rawVersion = Number(src.configVersion)
   const configVersion = Number.isInteger(rawVersion) && rawVersion > 0 ? rawVersion : 1
+  const lastOpenedFilePath = typeof src.lastOpenedFilePath === 'string' ? src.lastOpenedFilePath : ''
   return {
     configVersion,
+    lastOpenedFilePath,
     readMode: !!src.readMode,
     advancedMenu: !!src.advancedMenu,
     readHideLabels: !!src.readHideLabels,
@@ -70,14 +80,23 @@ function parseHeadingLine(line) {
   return { indent: m[1], level: m[2].length, gap: m[3], text: m[4] }
 }
 
+function getIndentWidth(ws) {
+  // 이 앱의 리스트 위계 단위(2칸)에 맞춰 탭을 2칸으로 정규화한다.
+  return String(ws || '').replace(/\t/g, '  ').length
+}
+
 function parseListLine(line) {
-  let m = line.match(/^(\s*)([-+*])([ \t]+)(.*)$/)
+  const src = String(line || '')
+  // 인용문(> ...) 내부 리스트도 같은 리스트 라인으로 본다.
+  const normalized = src.replace(/^\s*(?:>\s*)+/, '')
+
+  let m = normalized.match(/^(\s*)([-+*])([ \t]+)(.*)$/)
   if (m) {
-    return { indent: m[1].length, marker: m[2], gap: m[3], text: m[4], kind: 'bullet' }
+    return { indent: getIndentWidth(m[1]), marker: m[2], gap: m[3], text: m[4], kind: 'bullet' }
   }
-  m = line.match(/^(\s*)(\d+[.)])([ \t]+)(.*)$/)
+  m = normalized.match(/^(\s*)(\d+[.)])([ \t]+)(.*)$/)
   if (m) {
-    return { indent: m[1].length, marker: m[2], gap: m[3], text: m[4], kind: 'numbered' }
+    return { indent: getIndentWidth(m[1]), marker: m[2], gap: m[3], text: m[4], kind: 'numbered' }
   }
   return null
 }
@@ -102,7 +121,7 @@ function normalizeCompareText(text) {
 
 function countLeadingSpaces(line) {
   const m = line.match(/^(\s*)/)
-  return m ? m[1].length : 0
+  return m ? getIndentWidth(m[1]) : 0
 }
 
 function getFenceMask(lines) {
@@ -171,6 +190,65 @@ function findListLineIndexByText(lines, listText, fenceMask) {
     }
   }
   return bestIndex
+}
+
+function findNearestListLineByText(lines, listText, fenceMask, sourceLine) {
+  const key = normalizeCompareText(listText)
+  if (!key) return -1
+  const hasSource = Number.isInteger(sourceLine) && sourceLine >= 0 && sourceLine < lines.length
+
+  let bestIndex = -1
+  let bestScore = 0
+  let bestDistance = Number.POSITIVE_INFINITY
+
+  for (let i = 0; i < lines.length; i++) {
+    if (fenceMask[i]) continue
+    const l = parseListLine(lines[i])
+    if (!l) continue
+    const candidate = normalizeCompareText(l.text)
+    if (!candidate) continue
+    if (!(candidate.includes(key) || key.includes(candidate))) continue
+
+    const score = Math.min(candidate.length, key.length)
+    const distance = hasSource ? Math.abs(i - sourceLine) : 0
+
+    if (
+      score > bestScore ||
+      (score === bestScore && distance < bestDistance)
+    ) {
+      bestScore = score
+      bestDistance = distance
+      bestIndex = i
+    }
+  }
+  return bestIndex
+}
+
+function findNearestListLineFromSource(lines, sourceLine, fenceMask) {
+  if (!Number.isInteger(sourceLine) || sourceLine < 0 || sourceLine >= lines.length) return -1
+  if (!fenceMask[sourceLine] && parseListLine(lines[sourceLine])) return sourceLine
+
+  // 1) 위쪽 우선 탐색: 클릭이 li 내부 p/span에 걸린 경우 바로 위의 마커 라인을 찾는다.
+  for (let i = sourceLine - 1; i >= 0; i--) {
+    if (fenceMask[i]) continue
+    const line = lines[i]
+    if (!line || !line.trim()) continue
+    const h = parseHeadingLine(line)
+    if (h && h.level >= 1 && h.level <= 4) break
+    if (parseListLine(line)) return i
+  }
+
+  // 2) 아래쪽 탐색: 드문 케이스에서 sourceLine이 리스트 트리 시작 전후로 어긋난 경우 보정.
+  for (let i = sourceLine + 1; i < lines.length; i++) {
+    if (fenceMask[i]) continue
+    const line = lines[i]
+    if (!line || !line.trim()) continue
+    const h = parseHeadingLine(line)
+    if (h && h.level >= 1 && h.level <= 4) break
+    if (parseListLine(line)) return i
+  }
+
+  return -1
 }
 
 function getHeadingTreeEnd(lines, rootIndex, rootLevel, fenceMask) {
@@ -334,21 +412,41 @@ function transformOnce(content, action, target, scope = 'single') {
       const hs = parseHeadingLine(lines[target.sourceLine])
       if (hs && hs.level >= 1 && hs.level <= 4) {
         start = target.sourceLine
+      } else {
+        // sourceLine 이 명시된 경우 추정 fallback 을 쓰지 않는다(엄격 모드).
+        return { ok: false, code: 'E_SOURCE_MISMATCH', message: '선택 라인과 헤더 타입이 일치하지 않습니다.' }
       }
     }
     if (start < 0) {
       start = getHeadingLineIndexByTocIndex(lines, target.tocIndex, fenceMask)
     }
-    if (start < 0) return { ok: false, message: '선택한 헤더를 찾지 못했습니다.' }
+    if (start < 0) return { ok: false, code: 'E_HEADING_NOT_FOUND', message: '선택한 헤더를 찾지 못했습니다.' }
     const h = parseHeadingLine(lines[start])
-    if (!h || h.level > 4) return { ok: false, message: '유효한 헤더가 아닙니다.' }
+    if (!h || h.level > 4) return { ok: false, code: 'E_INVALID_HEADING', message: '유효한 헤더가 아닙니다.' }
     rootLevel = h.level
     end = getHeadingTreeEnd(lines, start, rootLevel, fenceMask)
   } else if (target.targetType === 'list') {
+    const targetTextKey = normalizeCompareText(target.listText || '')
     if (typeof target.sourceLine === 'number' && target.sourceLine >= 0 && target.sourceLine < lines.length) {
       const ls = parseListLine(lines[target.sourceLine])
       if (ls) {
         start = target.sourceLine
+      } else {
+        // sourceLine 이 명시된 경우 추정 fallback 을 쓰지 않는다(엄격 모드).
+        return { ok: false, code: 'E_SOURCE_MISMATCH', message: '선택 라인과 목록 타입이 일치하지 않습니다.' }
+      }
+    }
+    if (start < 0 && targetTextKey) {
+      // sourceLine 이 없을 때만 보조 탐색 허용(구버전 호출 호환)
+      start = findNearestListLineByText(lines, target.listText, fenceMask, target.sourceLine)
+    }
+    if (start >= 0 && targetTextKey) {
+      const selected = parseListLine(lines[start])
+      const selectedKey = selected ? normalizeCompareText(selected.text) : ''
+      const textMismatch = !selectedKey || !(selectedKey.includes(targetTextKey) || targetTextKey.includes(selectedKey))
+      if (textMismatch && typeof target.sourceLine !== 'number') {
+        const byNearText = findNearestListLineByText(lines, target.listText, fenceMask, target.sourceLine)
+        if (byNearText >= 0) start = byNearText
       }
     }
     if (start < 0) {
@@ -357,16 +455,16 @@ function transformOnce(content, action, target, scope = 'single') {
     if (start < 0) {
       start = findListLineIndexByText(lines, target.listText, fenceMask)
     }
-    if (start < 0) return { ok: false, message: '선택한 목록 항목을 찾지 못했습니다.' }
+    if (start < 0) return { ok: false, code: 'E_LIST_NOT_FOUND', message: '선택한 목록 항목을 찾지 못했습니다.' }
     const l = parseListLine(lines[start])
-    if (!l) return { ok: false, message: '유효한 목록 항목이 아닙니다.' }
+    if (!l) return { ok: false, code: 'E_INVALID_LIST', message: '유효한 목록 항목이 아닙니다.' }
     rootIndent = l.indent
     end = getListTreeEnd(lines, start, rootIndent, fenceMask)
   } else {
-    return { ok: false, message: '지원하지 않는 대상입니다.' }
+    return { ok: false, code: 'E_UNSUPPORTED_TARGET', message: '지원하지 않는 대상입니다.' }
   }
 
-  if (start < 0 || end <= start) return { ok: false, message: '변환 범위를 계산하지 못했습니다.' }
+  if (start < 0 || end <= start) return { ok: false, code: 'E_BAD_RANGE', message: '변환 범위를 계산하지 못했습니다.' }
 
   const groupMode = scope === 'group'
   if (!groupMode && (action === 'shiftUp' || action === 'shiftDown' || action === 'toBullet')) {
@@ -385,7 +483,7 @@ function transformOnce(content, action, target, scope = 'single') {
           convertListRangeToHeading(lines, start, end, rootIndent, fenceMask, baseLevel)
         } else {
           const one = parseListLine(lines[start])
-          if (!one) return { ok: false, message: '선택한 목록 항목을 헤더로 변환하지 못했습니다.' }
+          if (!one) return { ok: false, code: 'E_PROMOTE_FAILED', message: '선택한 목록 항목을 헤더로 변환하지 못했습니다.' }
           lines[start] = `${'#'.repeat(baseLevel)} ${normalizeListTextForHeading(one.text)}`
         }
       } else {
@@ -398,23 +496,23 @@ function transformOnce(content, action, target, scope = 'single') {
     } else {
       const prevIndent = getPreviousListIndent(lines, start, fenceMask)
       if (prevIndent === null || rootIndent + 2 > prevIndent + 2) {
-        return { ok: false, message: '블릿은 상위/이전 블릿보다 한 단계까지만 내려갈 수 있습니다.' }
+        return { ok: false, code: 'E_DEPTH_LIMIT', message: '블릿은 상위/이전 블릿보다 한 단계까지만 내려갈 수 있습니다.' }
       }
       shiftListTree(lines, start, end, 2, rootIndent, fenceMask)
     }
   } else if (action === 'toBullet') {
-    if (rootKind !== 'heading') return { ok: false, message: '헤더에서만 블릿 변환이 가능합니다.' }
+    if (rootKind !== 'heading') return { ok: false, code: 'E_NOT_HEADING', message: '헤더에서만 블릿 변환이 가능합니다.' }
     convertHeadingTreeToBullet(lines, start, end, rootLevel, fenceMask)
   } else if (action === 'toHeading') {
-    if (rootKind !== 'list') return { ok: false, message: '목록에서만 헤더 변환이 가능합니다.' }
+    if (rootKind !== 'list') return { ok: false, code: 'E_NOT_LIST', message: '목록에서만 헤더 변환이 가능합니다.' }
     const changed = convertListItemToHeading(lines, start, fenceMask)
-    if (!changed) return { ok: false, message: '선택한 목록 항목을 헤더로 변환하지 못했습니다.' }
+    if (!changed) return { ok: false, code: 'E_TO_HEADING_FAILED', message: '선택한 목록 항목을 헤더로 변환하지 못했습니다.' }
   } else {
-    return { ok: false, message: '지원하지 않는 액션입니다.' }
+    return { ok: false, code: 'E_UNSUPPORTED_ACTION', message: '지원하지 않는 액션입니다.' }
   }
 
   const updated = lines.join(eol)
-  if (updated === content) return { ok: false, message: '변경된 내용이 없습니다.' }
+  if (updated === content) return { ok: false, code: 'E_NO_CHANGE', message: '변경된 내용이 없습니다.' }
   return { ok: true, updatedContent: updated }
 }
 
@@ -514,7 +612,8 @@ async function openFileDialog() {
   }
 }
 
-function loadFile(filePath) {
+function loadFile(filePath, options = {}) {
+  const silent = !!options.silent
   try {
     const content = fs.readFileSync(filePath, 'utf-8')
     const fileName = path.basename(filePath)
@@ -523,8 +622,10 @@ function loadFile(filePath) {
     mainWindow.webContents.send('file:loaded', { content, filePath, fileName })
     mainWindow.setTitle(`mdSee - ${fileName}`)
     watchFile(filePath)
+    return true
   } catch (err) {
-    mainWindow.webContents.send('file:error', err.message)
+    if (!silent) mainWindow.webContents.send('file:error', err.message)
+    return false
   }
 }
 
@@ -547,14 +648,26 @@ function watchFile(filePath) {
 ipcMain.handle('file:open', () => openFileDialog())
 
 ipcMain.handle('file:loadPath', (event, filePath) => {
-  loadFile(filePath)
-  return true
+  const ok = loadFile(filePath)
+  return ok
+})
+
+ipcMain.handle('file:restoreLast', (event, payload) => {
+  const filePath = typeof payload === 'string'
+    ? payload
+    : (payload && typeof payload.filePath === 'string' ? payload.filePath : '')
+  if (!filePath) return { ok: false, code: 'NO_PATH' }
+  if (!fs.existsSync(filePath)) return { ok: false, code: 'NOT_FOUND' }
+  const ok = loadFile(filePath, { silent: true })
+  return ok ? { ok: true } : { ok: false, code: 'LOAD_FAILED' }
 })
 
 ipcMain.handle('file:transformTree', (event, payload) => {
   const { filePath, action, target, scope = 'single', currentContent } = payload || {}
+  sendDebugLog(`main:transform enter action=${action || '?'} scope=${scope}`)
   if (!filePath || !action || !target) {
-    return { ok: false, message: '잘못된 요청입니다.' }
+    sendDebugLog('main:transform bad request')
+    return { ok: false, code: 'E_BAD_REQUEST', message: '잘못된 요청입니다.' }
   }
 
   try {
@@ -574,19 +687,30 @@ ipcMain.handle('file:transformTree', (event, payload) => {
 
     let working = original
     for (const t of targets) {
+      sendDebugLog(`main:transform target type=${t.targetType || '?'} line=${Number.isInteger(t.sourceLine) ? (t.sourceLine + 1) : '?'} listIndex=${typeof t.listIndex === 'number' ? t.listIndex : '?'}`)
       const one = transformOnce(working, action, t, scope)
-      if (!one.ok) return one
+      if (!one.ok) {
+        sendDebugLog(`main:transform failed code=${one.code || 'E_TRANSFORM_FAILED'} msg=${one.message || 'unknown'}`)
+        return {
+          ok: false,
+          code: one.code || 'E_TRANSFORM_FAILED',
+          message: one.message || '위계 변경에 실패했습니다.'
+        }
+      }
       working = one.updatedContent
     }
 
     if (working === original) {
-      return { ok: false, message: '변경된 내용이 없습니다.' }
+      sendDebugLog('main:transform no change')
+      return { ok: false, code: 'E_NO_CHANGE', message: '변경된 내용이 없습니다.' }
     }
 
     pushUndoSnapshot(filePath, original)
+    sendDebugLog('main:transform success')
     return { ok: true, updatedContent: working }
   } catch (err) {
-    return { ok: false, message: err.message }
+    sendDebugLog(`main:transform exception ${err && err.message ? err.message : 'unknown'}`)
+    return { ok: false, code: 'E_TRANSFORM_EXCEPTION', message: err.message }
   }
 })
 
@@ -700,6 +824,14 @@ ipcMain.handle('settings:set', (event, payload) => {
     return { ok: true, settings }
   } catch (err) {
     return { ok: false, message: err.message }
+  }
+})
+
+ipcMain.handle('app:getVersion', () => {
+  try {
+    return { ok: true, version: app.getVersion() }
+  } catch (err) {
+    return { ok: false, message: err.message, version: 'unknown' }
   }
 })
 
