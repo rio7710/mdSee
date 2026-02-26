@@ -3,11 +3,6 @@
 
 # Keep tracked markdown files
 !CHANGELOG.md
-!CLAUDE.md
-!AGENTS.md
-!doc/**/*.md
-doc/etc/
-!.github/**/*.md
 
 # Local Claude Code settings
 .claude/
