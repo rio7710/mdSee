@@ -7,9 +7,13 @@
 
 ## [Unreleased]
 
-### Added
+---
 
-- 편집모드 우클릭 메뉴에 `줄 편집(editLine)` / `셀 편집(editCell)` 추가
+## [1.0.2] - 2026-02-26
+
+### Fixed
+
+- 자동업데이트: `package.json` publish 설정에서 `private: true` 제거 (공개 레포 인증 없이 업데이트 가능)
 
 ---
 
