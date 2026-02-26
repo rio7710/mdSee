@@ -45,8 +45,7 @@
     "publish": {
       "provider": "github",
       "owner": "rio7710",
-      "repo": "mdSee",
-      "private": true
+      "repo": "mdSee"
     }
   }
 }
