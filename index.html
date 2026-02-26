@@ -23,39 +23,150 @@
 
   <!-- 툴바 -->
   <div class="toolbar">
-    <button class="tool-btn" id="btnOpen" title="파일 열기 (Ctrl+O)">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-      </svg>
-      파일 열기
-    </button>
-    <button class="tool-btn" id="btnToc" title="목차 토글">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <!-- 목차 토글 버튼 -->
+    <button class="toc-toolbar-btn" id="btnToc" title="목차 패널 토글">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
         <line x1="3" y1="6" x2="21" y2="6"/>
         <line x1="3" y1="12" x2="15" y2="12"/>
         <line x1="3" y1="18" x2="18" y2="18"/>
       </svg>
-      목차
     </button>
-    <button class="tool-btn" id="btnSave" title="저장 (Ctrl+S)" disabled>
-      저장
-    </button>
-    <button class="tool-btn" id="btnMoveLine" title="줄 이동">
-      줄 이동
-    </button>
-    <button class="tool-btn" id="btnConsoleToggle" title="디버그 콘솔 토글">
-      콘솔
-    </button>
+
+    <!-- 파일 메뉴 -->
+    <div class="menu-group">
+      <button class="menu-btn" id="menuBtnFile">파일 <span class="menu-arrow">▾</span></button>
+      <div class="menu-dropdown" id="menuDropFile">
+        <button class="menu-drop-item" id="btnOpen">
+          <span>열기</span><span class="menu-shortcut">Ctrl+O</span>
+        </button>
+        <button class="menu-drop-item" id="btnSave" disabled>
+          <span>저장</span><span class="menu-shortcut">Ctrl+S</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- 보기 메뉴 -->
+    <div class="menu-group">
+      <button class="menu-btn" id="menuBtnView">보기 <span class="menu-arrow">▾</span></button>
+      <div class="menu-dropdown" id="menuDropView">
+        <div class="menu-template-row">
+          <input type="text" id="viewTemplateName" class="menu-template-input" placeholder="템플릿 이름">
+          <button class="menu-drop-item menu-template-save" id="btnTemplateSave">저장</button>
+        </div>
+        <div class="menu-font-picker">
+          <select id="viewTemplateSelect"></select>
+        </div>
+        <div class="menu-drop-sep"></div>
+        <div class="menu-font-picker">
+          <select id="viewDefaultFontSelect"></select>
+        </div>
+        <div class="menu-view-grid-head">
+          <span>헤더</span><span>로케이션</span><span>컬러</span><span>폰트</span>
+        </div>
+        <div class="menu-view-grid-row">
+          <button class="header-font-item menu-view-grid-title" data-level="1" title="헤더1 폰트 선택">헤더1</button>
+          <input type="checkbox" id="locationH1Switch" class="menu-view-loc" checked>
+          <button class="header-color-item menu-view-color-btn" data-level="1" title="헤더1 컬러"><span class="header-color-swatch" data-level="1"></span></button>
+          <input type="number" id="headingFontH1" class="menu-view-font-input" min="12" max="48" step="1">
+        </div>
+        <div class="menu-view-grid-row">
+          <button class="header-font-item menu-view-grid-title" data-level="2" title="헤더2 폰트 선택">헤더2</button>
+          <input type="checkbox" id="locationH2Switch" class="menu-view-loc" checked>
+          <button class="header-color-item menu-view-color-btn" data-level="2" title="헤더2 컬러"><span class="header-color-swatch" data-level="2"></span></button>
+          <input type="number" id="headingFontH2" class="menu-view-font-input" min="12" max="48" step="1">
+        </div>
+        <div class="menu-view-grid-row">
+          <button class="header-font-item menu-view-grid-title" data-level="3" title="헤더3 폰트 선택">헤더3</button>
+          <input type="checkbox" id="locationH3Switch" class="menu-view-loc" checked>
+          <button class="header-color-item menu-view-color-btn" data-level="3" title="헤더3 컬러"><span class="header-color-swatch" data-level="3"></span></button>
+          <input type="number" id="headingFontH3" class="menu-view-font-input" min="12" max="48" step="1">
+        </div>
+        <div class="menu-view-grid-row">
+          <button class="header-font-item menu-view-grid-title" data-level="4" title="헤더4 폰트 선택">헤더4</button>
+          <input type="checkbox" id="locationH4Switch" class="menu-view-loc" checked>
+          <button class="header-color-item menu-view-color-btn" data-level="4" title="헤더4 컬러"><span class="header-color-swatch" data-level="4"></span></button>
+          <input type="number" id="headingFontH4" class="menu-view-font-input" min="12" max="48" step="1">
+        </div>
+        <div class="menu-view-grid-row">
+          <button class="header-font-item menu-view-grid-title" data-level="5" title="헤더5 폰트 선택">헤더5</button>
+          <input type="checkbox" id="locationH5Switch" class="menu-view-loc" checked>
+          <button class="header-color-item menu-view-color-btn" data-level="5" title="헤더5 컬러"><span class="header-color-swatch" data-level="5"></span></button>
+          <input type="number" id="headingFontH5" class="menu-view-font-input" min="12" max="48" step="1">
+        </div>
+        <div class="menu-view-grid-row">
+          <button class="header-font-item menu-view-grid-title" data-level="6" title="헤더6 폰트 선택">헤더6</button>
+          <input type="checkbox" id="locationH6Switch" class="menu-view-loc" checked>
+          <button class="header-color-item menu-view-color-btn" data-level="6" title="헤더6 컬러"><span class="header-color-swatch" data-level="6"></span></button>
+          <input type="number" id="headingFontH6" class="menu-view-font-input" min="12" max="48" step="1">
+        </div>
+        <div class="menu-font-picker" id="viewHeaderFontPicker" style="display:none;">
+          <select id="viewHeaderFontSelect"></select>
+        </div>
+        <div class="menu-drop-sep"></div>
+        <div class="menu-view-grid-row menu-reset-grid">
+          <button class="menu-drop-item menu-reset-cell" id="btnResetHeaderFamilies">초기화</button>
+          <button class="menu-drop-item menu-reset-cell" id="btnResetHeaderLocation">초기화</button>
+          <button class="menu-drop-item menu-reset-cell" id="btnResetHeaderColors">초기화</button>
+          <button class="menu-drop-item menu-reset-cell" id="btnResetHeaderFonts">초기화</button>
+        </div>
+        <div class="menu-drop-sep"></div>
+        <label class="menu-drop-item menu-drop-check">
+          <span id="advancedMenuText">비활성메뉴(고급메뉴): 끔</span>
+          <input type="checkbox" id="advancedMenuSwitch">
+        </label>
+        <label class="menu-drop-item menu-drop-check">
+          <span id="consoleMenuText">콘솔: 끔</span>
+          <input type="checkbox" id="consoleMenuSwitch">
+        </label>
+        <div class="menu-color-picker" id="viewHeaderPalette" style="display:none;"></div>
+      </div>
+    </div>
+
+    <!-- 복사 메뉴 -->
+    <div class="menu-group">
+      <button class="menu-btn" id="menuBtnCopy">복사 <span class="menu-arrow">▾</span></button>
+      <div class="menu-dropdown" id="menuDropCopy">
+        <label class="menu-drop-item menu-drop-check">
+          <span id="menuAutoBlockText">블럭지정: 자동</span>
+          <input type="checkbox" id="menuAutoBlockSwitch" checked>
+        </label>
+        <label class="menu-drop-item menu-drop-check">
+          <span id="menuHtmlClipText">HTML 클립: 끔</span>
+          <input type="checkbox" id="menuHtmlClipSwitch">
+        </label>
+        <label class="menu-drop-item menu-drop-check">
+          <span id="menuHideLabelsText">라벨 감추기: 끔</span>
+          <input type="checkbox" id="menuHideLabelsSwitch">
+        </label>
+        <label class="menu-drop-item menu-drop-check">
+          <span id="menuAutoCopyText">자동 복사: 끔</span>
+          <input type="checkbox" id="menuAutoCopySwitch">
+        </label>
+        <div class="menu-drop-sep"></div>
+        <label class="menu-drop-item menu-drop-check">
+          <span id="stripNumbersText">번호삭제/클립보드: 끔</span>
+          <input type="checkbox" id="stripNumbersSwitch">
+        </label>
+      </div>
+    </div>
+
+    <div class="toolbar-div"></div>
+
+    <!-- 줄 이동 인라인 필드 -->
+    <div class="goto-line-field" id="gotoLineField" title="줄 이동 (Ctrl+G)">
+      <input type="number" id="gotoLineInput" min="1" placeholder="줄 번호" title="">
+      <button class="goto-line-btn" id="btnMoveLine">↵</button>
+    </div>
+
+    <div class="toolbar-div"></div>
+
+    <!-- 읽기/편집 모드 토글 -->
     <label class="mode-toggle" title="읽기/편집 모드 전환">
       <input type="checkbox" id="modeSwitch">
       <span class="mode-slider"></span>
       <span class="mode-text" id="modeText">편집모드</span>
     </label>
-    <label class="mode-toggle" title="우클릭 메뉴 고급 항목 표시">
-      <input type="checkbox" id="advancedMenuSwitch">
-      <span class="mode-slider"></span>
-      <span class="mode-text" id="advancedMenuText">고급메뉴: 끔</span>
-    </label>
+
     <div class="file-path" id="filePath"></div>
     <div class="watch-indicator" id="watchIndicator" style="display:none;">
       <span class="dot"></span> 자동 동기화 중
@@ -84,14 +195,20 @@
       <div class="main-layout" id="mainLayout" style="display:none;">
       <!-- TOC 사이드바 -->
       <div class="toc-panel" id="tocPanel">
-        <div class="toc-header">목차</div>
+        <div class="toc-header">
+          목차
+          <button class="toc-close-btn" id="btnTocClose" title="목차 닫기">×</button>
+        </div>
         <div class="toc-list" id="tocList"></div>
       </div>
 
-      <!-- 마크다운 뷰어 -->
-      <div class="markdown-view" id="markdownView">
-        <div class="line-gutter" id="lineGutter"></div>
-        <div class="markdown-body" id="markdownBody"></div>
+      <!-- 브레드크럼 + 마크다운 뷰어 컬럼 -->
+      <div class="content-column">
+        <div class="breadcrumb-bar" id="breadcrumbBar"></div>
+        <div class="markdown-view" id="markdownView">
+          <div class="line-gutter" id="lineGutter"></div>
+          <div class="markdown-body" id="markdownBody"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -124,6 +241,7 @@
     <button class="context-menu-item" id="readToggleHtmlClip">HTML 클립: 끔</button>
     <button class="context-menu-item" id="readToggleLabels">라벨 감추기: 끔</button>
     <button class="context-menu-item" id="readToggleAutoCopy">자동 복사: 끔</button>
+    <button class="context-menu-item" id="readToggleStripNumbers">번호삭제/클립보드: 끔</button>
   </div>
 
   <div class="context-menu" id="labelContextMenu" style="display:none;">

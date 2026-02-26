@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog } = require('electron')
 const { autoUpdater } = require('electron-updater')
 const path = require('path')
 const fs = require('fs')
+const { execFileSync } = require('child_process')
 
 let mainWindow
 let currentWatcher = null
@@ -17,7 +18,78 @@ const defaultUiSettings = {
   readHideLabels: false,
   readAutoCopy: false,
   readAutoBlockSelect: true,
-  readHtmlClip: false
+  readHtmlClip: false,
+  readStripNumbers: false,
+  locationShowH1: true,
+  locationShowH2: true,
+  locationShowH3: true,
+  locationShowH4: true,
+  locationShowH5: true,
+  locationShowH6: true,
+  headingColorH1: '#89b4fa',
+  headingColorH2: '#7fb0ff',
+  headingColorH3: '#74a7ff',
+  headingColorH4: '#689dff',
+  headingColorH5: '#fab387',
+  headingColorH6: '#e07a45',
+  headingFontH1: 32,
+  headingFontH2: 24,
+  headingFontH3: 20,
+  headingFontH4: 18,
+  headingFontH5: 18,
+  headingFontH6: 18,
+  headingFamilyH1: '',
+  headingFamilyH2: '',
+  headingFamilyH3: '',
+  headingFamilyH4: '',
+  headingFamilyH5: '',
+  headingFamilyH6: '',
+  defaultDocumentFont: '',
+  consoleVisible: true,
+  settingTemplates: {},
+  activeTemplateName: ''
+}
+
+function sanitizeHeadingFamily(value) {
+  const v = String(value || '').replace(/[\r\n\t]/g, ' ').trim()
+  return v.length <= 80 ? v : v.slice(0, 80)
+}
+
+function sanitizeTemplateName(name) {
+  return String(name || '').trim().slice(0, 40)
+}
+
+function sanitizeTemplateSettings(input) {
+  const src = input && typeof input === 'object' ? input : {}
+  return {
+    advancedMenu: !!src.advancedMenu,
+    consoleVisible: src.consoleVisible !== false,
+    locationShowH1: src.locationShowH1 !== false,
+    locationShowH2: src.locationShowH2 !== false,
+    locationShowH3: src.locationShowH3 !== false,
+    locationShowH4: src.locationShowH4 !== false,
+    locationShowH5: src.locationShowH5 !== false,
+    locationShowH6: src.locationShowH6 !== false,
+    headingColorH1: /^#([0-9a-fA-F]{6})$/.test(String(src.headingColorH1 || '')) ? String(src.headingColorH1) : '#89b4fa',
+    headingColorH2: /^#([0-9a-fA-F]{6})$/.test(String(src.headingColorH2 || '')) ? String(src.headingColorH2) : '#7fb0ff',
+    headingColorH3: /^#([0-9a-fA-F]{6})$/.test(String(src.headingColorH3 || '')) ? String(src.headingColorH3) : '#74a7ff',
+    headingColorH4: /^#([0-9a-fA-F]{6})$/.test(String(src.headingColorH4 || '')) ? String(src.headingColorH4) : '#689dff',
+    headingColorH5: /^#([0-9a-fA-F]{6})$/.test(String(src.headingColorH5 || '')) ? String(src.headingColorH5) : '#fab387',
+    headingColorH6: /^#([0-9a-fA-F]{6})$/.test(String(src.headingColorH6 || '')) ? String(src.headingColorH6) : '#e07a45',
+    headingFontH1: Number.isFinite(Number(src.headingFontH1)) ? Math.max(12, Math.min(48, Math.round(Number(src.headingFontH1)))) : 32,
+    headingFontH2: Number.isFinite(Number(src.headingFontH2)) ? Math.max(12, Math.min(48, Math.round(Number(src.headingFontH2)))) : 24,
+    headingFontH3: Number.isFinite(Number(src.headingFontH3)) ? Math.max(12, Math.min(48, Math.round(Number(src.headingFontH3)))) : 20,
+    headingFontH4: Number.isFinite(Number(src.headingFontH4)) ? Math.max(12, Math.min(48, Math.round(Number(src.headingFontH4)))) : 18,
+    headingFontH5: Number.isFinite(Number(src.headingFontH5)) ? Math.max(12, Math.min(48, Math.round(Number(src.headingFontH5)))) : 18,
+    headingFontH6: Number.isFinite(Number(src.headingFontH6)) ? Math.max(12, Math.min(48, Math.round(Number(src.headingFontH6)))) : 18,
+    headingFamilyH1: sanitizeHeadingFamily(src.headingFamilyH1),
+    headingFamilyH2: sanitizeHeadingFamily(src.headingFamilyH2),
+    headingFamilyH3: sanitizeHeadingFamily(src.headingFamilyH3),
+    headingFamilyH4: sanitizeHeadingFamily(src.headingFamilyH4),
+    headingFamilyH5: sanitizeHeadingFamily(src.headingFamilyH5),
+    headingFamilyH6: sanitizeHeadingFamily(src.headingFamilyH6),
+    defaultDocumentFont: sanitizeHeadingFamily(src.defaultDocumentFont)
+  }
 }
 
 function sendDebugLog(message) {
@@ -38,6 +110,14 @@ function sanitizeSettings(input) {
   const lastOpenedFilePath = typeof src.lastOpenedFilePath === 'string' ? src.lastOpenedFilePath : ''
   const rawRatio = Number(src.lastScrollRatio)
   const lastScrollRatio = Number.isFinite(rawRatio) && rawRatio >= 0 && rawRatio <= 1 ? rawRatio : 0
+  const templatesRaw = src.settingTemplates && typeof src.settingTemplates === 'object' ? src.settingTemplates : {}
+  const settingTemplates = {}
+  Object.entries(templatesRaw).forEach(([name, value]) => {
+    const key = sanitizeTemplateName(name)
+    if (!key) return
+    settingTemplates[key] = sanitizeTemplateSettings(value)
+  })
+  const activeTemplateName = sanitizeTemplateName(src.activeTemplateName)
   return {
     configVersion,
     lastOpenedFilePath,
@@ -47,7 +127,66 @@ function sanitizeSettings(input) {
     readHideLabels: !!src.readHideLabels,
     readAutoCopy: !!src.readAutoCopy,
     readAutoBlockSelect: src.readAutoBlockSelect !== false,
-    readHtmlClip: !!src.readHtmlClip
+    readHtmlClip: !!src.readHtmlClip,
+    readStripNumbers: !!src.readStripNumbers,
+    consoleVisible: src.consoleVisible !== false,
+    locationShowH1: src.locationShowH1 !== false,
+    locationShowH2: src.locationShowH2 !== false,
+    locationShowH3: src.locationShowH3 !== false,
+    locationShowH4: src.locationShowH4 !== false,
+    locationShowH5: src.locationShowH5 !== false,
+    locationShowH6: src.locationShowH6 !== false,
+    headingColorH1: /^#([0-9a-fA-F]{6})$/.test(String(src.headingColorH1 || '')) ? String(src.headingColorH1) : '',
+    headingColorH2: /^#([0-9a-fA-F]{6})$/.test(String(src.headingColorH2 || '')) ? String(src.headingColorH2) : '',
+    headingColorH3: /^#([0-9a-fA-F]{6})$/.test(String(src.headingColorH3 || '')) ? String(src.headingColorH3) : '',
+    headingColorH4: /^#([0-9a-fA-F]{6})$/.test(String(src.headingColorH4 || '')) ? String(src.headingColorH4) : '',
+    headingColorH5: /^#([0-9a-fA-F]{6})$/.test(String(src.headingColorH5 || '')) ? String(src.headingColorH5) : '',
+    headingColorH6: /^#([0-9a-fA-F]{6})$/.test(String(src.headingColorH6 || '')) ? String(src.headingColorH6) : '',
+    headingFontH1: Number.isFinite(Number(src.headingFontH1)) ? Math.max(12, Math.min(48, Math.round(Number(src.headingFontH1)))) : 32,
+    headingFontH2: Number.isFinite(Number(src.headingFontH2)) ? Math.max(12, Math.min(48, Math.round(Number(src.headingFontH2)))) : 24,
+    headingFontH3: Number.isFinite(Number(src.headingFontH3)) ? Math.max(12, Math.min(48, Math.round(Number(src.headingFontH3)))) : 20,
+    headingFontH4: Number.isFinite(Number(src.headingFontH4)) ? Math.max(12, Math.min(48, Math.round(Number(src.headingFontH4)))) : 18,
+    headingFontH5: Number.isFinite(Number(src.headingFontH5)) ? Math.max(12, Math.min(48, Math.round(Number(src.headingFontH5)))) : 18,
+    headingFontH6: Number.isFinite(Number(src.headingFontH6)) ? Math.max(12, Math.min(48, Math.round(Number(src.headingFontH6)))) : 18,
+    headingFamilyH1: sanitizeHeadingFamily(src.headingFamilyH1),
+    headingFamilyH2: sanitizeHeadingFamily(src.headingFamilyH2),
+    headingFamilyH3: sanitizeHeadingFamily(src.headingFamilyH3),
+    headingFamilyH4: sanitizeHeadingFamily(src.headingFamilyH4),
+    headingFamilyH5: sanitizeHeadingFamily(src.headingFamilyH5),
+    headingFamilyH6: sanitizeHeadingFamily(src.headingFamilyH6),
+    defaultDocumentFont: sanitizeHeadingFamily(src.defaultDocumentFont),
+    settingTemplates,
+    activeTemplateName: settingTemplates[activeTemplateName] ? activeTemplateName : ''
+  }
+}
+
+function listSystemFonts() {
+  const fallback = ['맑은 고딕', 'Malgun Gothic', 'Segoe UI', 'Arial', 'Times New Roman', 'Consolas']
+  if (process.platform !== 'win32') return fallback
+  try {
+    const psScript = [
+      "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
+      "$items = Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts'",
+      "$props = $items.PSObject.Properties | Where-Object { $_.Name -notlike 'PS*' } | ForEach-Object { $_.Name }",
+      "$props | ConvertTo-Json -Compress"
+    ].join('; ')
+    const output = execFileSync('powershell.exe', ['-NoProfile', '-Command', psScript], { encoding: 'utf8' })
+    let names = []
+    try {
+      const parsed = JSON.parse(String(output || '[]').trim() || '[]')
+      names = Array.isArray(parsed) ? parsed : [parsed]
+    } catch (_) {
+      names = []
+    }
+    const fonts = names
+      .map((n) => String(n || '').trim())
+      .map((n) => n.replace(/\s*\((TrueType|OpenType|트루타입)\)\s*$/i, '').trim())
+      .filter(Boolean)
+    const unique = Array.from(new Set(fonts))
+    unique.sort((a, b) => a.localeCompare(b, 'ko-KR'))
+    return unique.length ? unique : fallback
+  } catch (_) {
+    return fallback
   }
 }
 
@@ -152,6 +291,36 @@ function getFenceMask(lines) {
   return mask
 }
 
+// 문서 열 때 헤딩/리스트 실제 범위를 스캔한다.
+// maxHeadingLevel은 마크다운 스펙 상한(6)으로 하드캡.
+function scanDocumentStats(content) {
+  const lines = String(content || '').split(/\r?\n/)
+  const fenceMask = getFenceMask(lines)
+  let minH = 7, maxH = 0, minList = Infinity, maxList = -1
+  for (let i = 0; i < lines.length; i++) {
+    if (fenceMask[i]) continue
+    const h = parseHeadingLine(lines[i])
+    if (h && h.level >= 1 && h.level <= 6) {
+      if (h.level < minH) minH = h.level
+      if (h.level > maxH) maxH = h.level
+      continue
+    }
+    const l = parseListLine(lines[i])
+    if (l) {
+      if (l.indent < minList) minList = l.indent
+      if (l.indent > maxList) maxList = l.indent
+    }
+  }
+  return {
+    maxHeadingLevel: Math.min(6, maxH > 0 ? maxH : 6),
+    minHeadingLevel: minH < 7 ? minH : 1,
+    maxListDepth: maxList >= 0 ? maxList : 0,
+    minListDepth: minList < Infinity ? minList : 0
+  }
+}
+
+let currentDocStats = { maxHeadingLevel: 6, minHeadingLevel: 1, maxListDepth: 0, minListDepth: 0 }
+
 function getHeadingLineIndexByTocIndex(lines, tocIndex, fenceMask) {
   const headingLineIndexes = []
   for (let i = 0; i < lines.length; i++) {
@@ -238,7 +407,7 @@ function findNearestListLineFromSource(lines, sourceLine, fenceMask) {
     const line = lines[i]
     if (!line || !line.trim()) continue
     const h = parseHeadingLine(line)
-    if (h && h.level >= 1 && h.level <= 4) break
+    if (h && h.level >= 1 && h.level <= currentDocStats.maxHeadingLevel) break
     if (parseListLine(line)) return i
   }
 
@@ -248,7 +417,7 @@ function findNearestListLineFromSource(lines, sourceLine, fenceMask) {
     const line = lines[i]
     if (!line || !line.trim()) continue
     const h = parseHeadingLine(line)
-    if (h && h.level >= 1 && h.level <= 4) break
+    if (h && h.level >= 1 && h.level <= currentDocStats.maxHeadingLevel) break
     if (parseListLine(line)) return i
   }
 
@@ -276,7 +445,7 @@ function getListTreeEnd(lines, rootIndex, rootIndent, fenceMask) {
     if (line.trim() === '') continue
 
     const h = parseHeadingLine(line)
-    if (h && h.level >= 1 && h.level <= 4) {
+    if (h && h.level >= 1 && h.level <= currentDocStats.maxHeadingLevel) {
       end = i
       break
     }
@@ -303,7 +472,7 @@ function getPreviousListIndent(lines, startIndex, fenceMask) {
     const l = parseListLine(lines[i])
     if (l) return l.indent
     const h = parseHeadingLine(lines[i])
-    if (h && h.level >= 1 && h.level <= 4) break
+    if (h && h.level >= 1 && h.level <= currentDocStats.maxHeadingLevel) break
   }
   return null
 }
@@ -316,9 +485,9 @@ function getPreviousHeadingLevel(lines, index, fenceMask) {
   for (let i = index - 1; i >= 0; i--) {
     if (fenceMask[i]) continue
     const h = parseHeadingLine(lines[i])
-    if (h && h.level >= 1 && h.level <= 4) return h.level
+    if (h && h.level >= 1 && h.level <= currentDocStats.maxHeadingLevel) return h.level
   }
-  return 1
+  return currentDocStats.minHeadingLevel
 }
 
 function normalizeListTextForHeading(text) {
@@ -329,8 +498,8 @@ function shiftHeadingTree(lines, start, end, delta, fenceMask) {
   for (let i = start; i < end; i++) {
     if (fenceMask[i]) continue
     const h = parseHeadingLine(lines[i])
-    if (!h || h.level > 4) continue
-    const nextLevel = clamp(h.level + delta, 1, 4)
+    if (!h || h.level > currentDocStats.maxHeadingLevel) continue
+    const nextLevel = clamp(h.level + delta, 1, currentDocStats.maxHeadingLevel)
     lines[i] = `${h.indent}${'#'.repeat(nextLevel)}${h.gap}${h.text}`
   }
 }
@@ -342,7 +511,7 @@ function shiftListTree(lines, start, end, deltaIndent, rootIndent, fenceMask) {
     if (line.trim() === '') continue
 
     const h = parseHeadingLine(line)
-    if (h && h.level >= 1 && h.level <= 4) continue
+    if (h && h.level >= 1 && h.level <= currentDocStats.maxHeadingLevel) continue
 
     const l = parseListLine(line)
     if (l) {
@@ -366,7 +535,7 @@ function convertHeadingTreeToBullet(lines, start, end, rootLevel, fenceMask) {
     if (line.trim() === '') continue
 
     const h = parseHeadingLine(lines[i])
-    if (h && h.level <= 4) {
+    if (h && h.level <= currentDocStats.maxHeadingLevel) {
       const relDepth = Math.max(0, h.level - rootLevel)
       const indent = ' '.repeat(relDepth * 2)
       lines[i] = `${indent}- ${escapeOrderedListLikeStart(h.text)}`
@@ -384,7 +553,7 @@ function convertListItemToHeading(lines, index, fenceMask) {
   const l = parseListLine(lines[index])
   if (!l) return false
   const prevLevel = getPreviousHeadingLevel(lines, index, fenceMask)
-  const level = clamp(prevLevel + 1, 1, 4)
+  const level = clamp(prevLevel + 1, currentDocStats.minHeadingLevel, currentDocStats.maxHeadingLevel)
   lines[index] = `${'#'.repeat(level)} ${normalizeListTextForHeading(l.text)}`
   return true
 }
@@ -395,7 +564,7 @@ function convertListRangeToHeading(lines, start, end, rootIndent, fenceMask, bas
     const l = parseListLine(lines[i])
     if (!l || l.indent < rootIndent) continue
     const rel = Math.max(0, Math.floor((l.indent - rootIndent) / 2))
-    const level = clamp(baseLevel + rel, 1, 4)
+    const level = clamp(baseLevel + rel, currentDocStats.minHeadingLevel, currentDocStats.maxHeadingLevel)
     lines[i] = `${'#'.repeat(level)} ${normalizeListTextForHeading(l.text)}`
   }
 }
@@ -414,7 +583,7 @@ function transformOnce(content, action, target, scope = 'single') {
   if (target.targetType === 'heading') {
     if (typeof target.sourceLine === 'number' && target.sourceLine >= 0 && target.sourceLine < lines.length) {
       const hs = parseHeadingLine(lines[target.sourceLine])
-      if (hs && hs.level >= 1 && hs.level <= 4) {
+      if (hs && hs.level >= 1 && hs.level <= currentDocStats.maxHeadingLevel) {
         start = target.sourceLine
       } else {
         // sourceLine 이 명시된 경우 추정 fallback 을 쓰지 않는다(엄격 모드).
@@ -426,7 +595,7 @@ function transformOnce(content, action, target, scope = 'single') {
     }
     if (start < 0) return { ok: false, code: 'E_HEADING_NOT_FOUND', message: '선택한 헤더를 찾지 못했습니다.' }
     const h = parseHeadingLine(lines[start])
-    if (!h || h.level > 4) return { ok: false, code: 'E_INVALID_HEADING', message: '유효한 헤더가 아닙니다.' }
+    if (!h || h.level > currentDocStats.maxHeadingLevel) return { ok: false, code: 'E_INVALID_HEADING', message: '유효한 헤더가 아닙니다.' }
     rootLevel = h.level
     end = getHeadingTreeEnd(lines, start, rootLevel, fenceMask)
   } else if (target.targetType === 'list') {
@@ -641,7 +810,8 @@ function loadFile(filePath, options = {}) {
     const fileName = path.basename(filePath)
     currentFilePath = filePath
 
-    mainWindow.webContents.send('file:loaded', { content, filePath, fileName })
+    currentDocStats = scanDocumentStats(content)
+    mainWindow.webContents.send('file:loaded', { content, filePath, fileName, docStats: currentDocStats })
     mainWindow.setTitle(`mdSee - ${fileName}`)
     watchFile(filePath)
     return true
@@ -661,7 +831,8 @@ function watchFile(filePath) {
     if (eventType === 'change') {
       try {
         const content = fs.readFileSync(filePath, 'utf-8')
-        mainWindow.webContents.send('file:changed', { content })
+        currentDocStats = scanDocumentStats(content)
+        mainWindow.webContents.send('file:changed', { content, docStats: currentDocStats })
       } catch (_) {}
     }
   })
@@ -854,6 +1025,14 @@ ipcMain.handle('app:getVersion', () => {
     return { ok: true, version: app.getVersion() }
   } catch (err) {
     return { ok: false, message: err.message, version: 'unknown' }
+  }
+})
+
+ipcMain.handle('app:listSystemFonts', () => {
+  try {
+    return { ok: true, fonts: listSystemFonts() }
+  } catch (err) {
+    return { ok: false, message: err.message, fonts: [] }
   }
 })
 

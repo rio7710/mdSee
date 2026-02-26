@@ -36,11 +36,13 @@ const btnOpen = document.getElementById('btnOpen')
 const btnOpenLarge = document.getElementById('btnOpenLarge')
 const btnSave = document.getElementById('btnSave')
 const btnMoveLine = document.getElementById('btnMoveLine')
-const btnConsoleToggle = document.getElementById('btnConsoleToggle')
+const consoleMenuSwitch = document.getElementById('consoleMenuSwitch')
+const consoleMenuText = document.getElementById('consoleMenuText')
 const btnMinimize = document.getElementById('btnMinimize')
 const btnMaximize = document.getElementById('btnMaximize')
 const btnClose = document.getElementById('btnClose')
 const btnToc = document.getElementById('btnToc')
+const breadcrumbBar = document.getElementById('breadcrumbBar')
 const actionToast = document.getElementById('actionToast')
 const debugConsole = document.getElementById('debugConsole')
 const debugConsoleBody = document.getElementById('debugConsoleBody')
@@ -68,12 +70,51 @@ const readToggleAutoBlock = document.getElementById('readToggleAutoBlock')
 const readToggleHtmlClip = document.getElementById('readToggleHtmlClip')
 const readToggleLabels = document.getElementById('readToggleLabels')
 const readToggleAutoCopy = document.getElementById('readToggleAutoCopy')
+const readToggleStripNumbers = document.getElementById('readToggleStripNumbers')
 const labelContextMenu = document.getElementById('labelContextMenu')
 const labelContextMenuStatus = document.getElementById('labelContextMenuStatus')
 const modeSwitch = document.getElementById('modeSwitch')
 const modeText = document.getElementById('modeText')
 const advancedMenuSwitch = document.getElementById('advancedMenuSwitch')
 const advancedMenuText = document.getElementById('advancedMenuText')
+const locationH1Switch = document.getElementById('locationH1Switch')
+const locationH2Switch = document.getElementById('locationH2Switch')
+const locationH3Switch = document.getElementById('locationH3Switch')
+const locationH4Switch = document.getElementById('locationH4Switch')
+const locationH5Switch = document.getElementById('locationH5Switch')
+const locationH6Switch = document.getElementById('locationH6Switch')
+const stripNumbersSwitch = document.getElementById('stripNumbersSwitch')
+const stripNumbersText = document.getElementById('stripNumbersText')
+// 복사 메뉴 드롭다운 체크박스
+const menuAutoBlockSwitch = document.getElementById('menuAutoBlockSwitch')
+const menuAutoBlockText = document.getElementById('menuAutoBlockText')
+const menuHtmlClipSwitch = document.getElementById('menuHtmlClipSwitch')
+const menuHtmlClipText = document.getElementById('menuHtmlClipText')
+const menuHideLabelsSwitch = document.getElementById('menuHideLabelsSwitch')
+const menuHideLabelsText = document.getElementById('menuHideLabelsText')
+const menuAutoCopySwitch = document.getElementById('menuAutoCopySwitch')
+const menuAutoCopyText = document.getElementById('menuAutoCopyText')
+const viewHeaderPalette = document.getElementById('viewHeaderPalette')
+const headerColorItems = Array.from(document.querySelectorAll('.header-color-item'))
+const headerFontItems = Array.from(document.querySelectorAll('.header-font-item'))
+const btnResetHeaderColors = document.getElementById('btnResetHeaderColors')
+const btnResetHeaderFonts = document.getElementById('btnResetHeaderFonts')
+const btnResetHeaderLocation = document.getElementById('btnResetHeaderLocation')
+const btnResetHeaderFamilies = document.getElementById('btnResetHeaderFamilies')
+const viewHeaderFontPicker = document.getElementById('viewHeaderFontPicker')
+const viewHeaderFontSelect = document.getElementById('viewHeaderFontSelect')
+const viewDefaultFontSelect = document.getElementById('viewDefaultFontSelect')
+const viewTemplateName = document.getElementById('viewTemplateName')
+const viewTemplateSelect = document.getElementById('viewTemplateSelect')
+const btnTemplateSave = document.getElementById('btnTemplateSave')
+const headingFontInputs = {
+  1: document.getElementById('headingFontH1'),
+  2: document.getElementById('headingFontH2'),
+  3: document.getElementById('headingFontH3'),
+  4: document.getElementById('headingFontH4'),
+  5: document.getElementById('headingFontH5'),
+  6: document.getElementById('headingFontH6')
+}
 
 let scrollRatio = 0
 let scrollSaveTimer = null
@@ -81,11 +122,13 @@ let pendingRestoreRatio = null
 let tocVisible = true
 let focusedTocIndex = -1  // 키보드로 포커스된 TOC 항목 인덱스
 let tocItems = []         // TOC 항목 배열 (레벨 정보 포함)
+let collapsedTocItems = new Set()  // 접힌 TOC 항목 인덱스
 let currentFilePath = ''
 let contextTarget = null
 let lastMenuActionContext = null
 let diskContent = ''
 let workingContent = ''
+let currentDocStats = { maxHeadingLevel: 6, minHeadingLevel: 1, maxListDepth: 0, minListDepth: 0 }
 let isDirty = false
 let isReadMode = false
 let isAdjustingReadSelection = false
@@ -93,7 +136,34 @@ let readHideLabels = false
 let readAutoCopy = false
 let readAutoBlockSelect = true
 let readHtmlClip = false
+let readStripNumbers = false
 let advancedMenu = false
+let locationHeadingVisible = { 1: true, 2: true, 3: true, 4: true, 5: true, 6: true }
+const DEFAULT_HEADING_COLORS = {
+  1: '#89b4fa',
+  2: '#7fb0ff',
+  3: '#74a7ff',
+  4: '#689dff',
+  5: '#fab387',
+  6: '#e07a45'
+}
+let headingColors = { ...DEFAULT_HEADING_COLORS }
+const DEFAULT_HEADING_FONTS = {
+  1: 32,
+  2: 24,
+  3: 20,
+  4: 18,
+  5: 18,
+  6: 18
+}
+let headingFonts = { ...DEFAULT_HEADING_FONTS }
+let headingFamilies = { 1: '', 2: '', 3: '', 4: '', 5: '', 6: '' }
+let defaultDocumentFont = ''
+let activeHeaderColorLevel = 0
+let activeHeaderFontLevel = 0
+let availableSystemFonts = []
+let settingTemplates = {}
+let activeTemplateName = ''
 let lastAutoCopiedText = ''
 let lastReadSelectedBlocks = []
 let activeInlineEditor = null
@@ -103,6 +173,367 @@ let isConsoleVisible = true
 let suppressGlobalMenuCloseUntil = 0
 let toastTimer = null
 let lastOpenedFilePath = ''
+const RAINBOW_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#a855f7']
+
+function isHexColor(v) {
+  return /^#([0-9a-fA-F]{6})$/.test(String(v || ''))
+}
+
+function normalizeHeadingColorMap(input = {}) {
+  const out = {}
+  for (let level = 1; level <= 6; level++) {
+    const raw = input[level]
+    out[level] = isHexColor(raw) ? String(raw).toLowerCase() : DEFAULT_HEADING_COLORS[level]
+  }
+  return out
+}
+
+function normalizeHeadingFontMap(input = {}) {
+  const out = {}
+  for (let level = 1; level <= 6; level++) {
+    const raw = Number(input[level])
+    out[level] = Number.isFinite(raw) && raw >= 12 && raw <= 48 ? Math.round(raw) : DEFAULT_HEADING_FONTS[level]
+  }
+  return out
+}
+
+function applyHeadingColors() {
+  for (let level = 1; level <= 6; level++) {
+    const key = `--heading-color-h${level}`
+    const value = headingColors[level]
+    if (isHexColor(value)) {
+      document.documentElement.style.setProperty(key, String(value).toLowerCase())
+    } else {
+      document.documentElement.style.removeProperty(key)
+    }
+  }
+}
+
+function applyHeadingFonts() {
+  for (let level = 1; level <= 6; level++) {
+    const key = `--heading-font-h${level}`
+    const value = Number(headingFonts[level])
+    if (Number.isFinite(value) && value >= 12 && value <= 48) {
+      document.documentElement.style.setProperty(key, `${Math.round(value)}px`)
+    } else {
+      document.documentElement.style.removeProperty(key)
+    }
+  }
+}
+
+function applyHeadingFamilies() {
+  for (let level = 1; level <= 6; level++) {
+    const key = `--heading-family-h${level}`
+    const value = String(headingFamilies[level] || '').trim()
+    if (value) {
+      const escaped = value.replace(/'/g, "\\'")
+      document.documentElement.style.setProperty(key, `'${escaped}'`)
+    } else {
+      document.documentElement.style.removeProperty(key)
+    }
+  }
+}
+
+function applyDefaultDocumentFont() {
+  const value = String(defaultDocumentFont || '').trim()
+  if (value) {
+    const escaped = value.replace(/'/g, "\\'")
+    document.documentElement.style.setProperty('--doc-font-family', `'${escaped}'`)
+  } else {
+    document.documentElement.style.removeProperty('--doc-font-family')
+  }
+}
+
+function updateHeaderColorItemUi() {
+  const swatches = Array.from(document.querySelectorAll('.header-color-swatch'))
+  swatches.forEach((swatch) => {
+    const level = Number(swatch.dataset.level)
+    const color = headingColors[level]
+    if (isHexColor(color)) {
+      swatch.style.background = color
+      swatch.classList.add('has-color')
+    } else {
+      swatch.style.background = 'transparent'
+      swatch.classList.remove('has-color')
+    }
+  })
+}
+
+function updateHeadingFontInputUi() {
+  for (let level = 1; level <= 6; level++) {
+    const input = headingFontInputs[level]
+    if (!input) continue
+    input.value = String(headingFonts[level])
+  }
+}
+
+function normalizeHeadingFamilyMap(input = {}) {
+  const out = {}
+  for (let level = 1; level <= 6; level++) {
+    out[level] = String(input[level] || '').trim()
+  }
+  return out
+}
+
+function normalizeTemplateMap(input = {}) {
+  const out = {}
+  if (!input || typeof input !== 'object') return out
+  Object.entries(input).forEach(([name, value]) => {
+    const key = String(name || '').trim().slice(0, 40)
+    if (!key) return
+    const src = value && typeof value === 'object' ? value : {}
+    out[key] = {
+      advancedMenu: !!src.advancedMenu,
+      consoleVisible: src.consoleVisible !== false,
+      locationShowH1: src.locationShowH1 !== false,
+      locationShowH2: src.locationShowH2 !== false,
+      locationShowH3: src.locationShowH3 !== false,
+      locationShowH4: src.locationShowH4 !== false,
+      locationShowH5: src.locationShowH5 !== false,
+      locationShowH6: src.locationShowH6 !== false,
+      headingColorH1: isHexColor(src.headingColorH1) ? String(src.headingColorH1).toLowerCase() : DEFAULT_HEADING_COLORS[1],
+      headingColorH2: isHexColor(src.headingColorH2) ? String(src.headingColorH2).toLowerCase() : DEFAULT_HEADING_COLORS[2],
+      headingColorH3: isHexColor(src.headingColorH3) ? String(src.headingColorH3).toLowerCase() : DEFAULT_HEADING_COLORS[3],
+      headingColorH4: isHexColor(src.headingColorH4) ? String(src.headingColorH4).toLowerCase() : DEFAULT_HEADING_COLORS[4],
+      headingColorH5: isHexColor(src.headingColorH5) ? String(src.headingColorH5).toLowerCase() : DEFAULT_HEADING_COLORS[5],
+      headingColorH6: isHexColor(src.headingColorH6) ? String(src.headingColorH6).toLowerCase() : DEFAULT_HEADING_COLORS[6],
+      headingFontH1: Number.isFinite(Number(src.headingFontH1)) ? Math.max(12, Math.min(48, Math.round(Number(src.headingFontH1)))) : DEFAULT_HEADING_FONTS[1],
+      headingFontH2: Number.isFinite(Number(src.headingFontH2)) ? Math.max(12, Math.min(48, Math.round(Number(src.headingFontH2)))) : DEFAULT_HEADING_FONTS[2],
+      headingFontH3: Number.isFinite(Number(src.headingFontH3)) ? Math.max(12, Math.min(48, Math.round(Number(src.headingFontH3)))) : DEFAULT_HEADING_FONTS[3],
+      headingFontH4: Number.isFinite(Number(src.headingFontH4)) ? Math.max(12, Math.min(48, Math.round(Number(src.headingFontH4)))) : DEFAULT_HEADING_FONTS[4],
+      headingFontH5: Number.isFinite(Number(src.headingFontH5)) ? Math.max(12, Math.min(48, Math.round(Number(src.headingFontH5)))) : DEFAULT_HEADING_FONTS[5],
+      headingFontH6: Number.isFinite(Number(src.headingFontH6)) ? Math.max(12, Math.min(48, Math.round(Number(src.headingFontH6)))) : DEFAULT_HEADING_FONTS[6],
+      headingFamilyH1: String(src.headingFamilyH1 || '').trim(),
+      headingFamilyH2: String(src.headingFamilyH2 || '').trim(),
+      headingFamilyH3: String(src.headingFamilyH3 || '').trim(),
+      headingFamilyH4: String(src.headingFamilyH4 || '').trim(),
+      headingFamilyH5: String(src.headingFamilyH5 || '').trim(),
+      headingFamilyH6: String(src.headingFamilyH6 || '').trim(),
+      defaultDocumentFont: String(src.defaultDocumentFont || '').trim()
+    }
+  })
+  return out
+}
+
+function renderTemplateOptions() {
+  if (!viewTemplateSelect) return
+  viewTemplateSelect.innerHTML = ''
+  const base = document.createElement('option')
+  base.value = ''
+  base.textContent = '템플릿 선택'
+  viewTemplateSelect.appendChild(base)
+  Object.keys(settingTemplates).sort((a, b) => a.localeCompare(b, 'ko-KR')).forEach((name) => {
+    const opt = document.createElement('option')
+    opt.value = name
+    opt.textContent = name
+    viewTemplateSelect.appendChild(opt)
+  })
+  viewTemplateSelect.value = settingTemplates[activeTemplateName] ? activeTemplateName : ''
+}
+
+function collectTemplateSettings() {
+  return {
+    advancedMenu,
+    consoleVisible: isConsoleVisible,
+    locationShowH1: !!locationHeadingVisible[1],
+    locationShowH2: !!locationHeadingVisible[2],
+    locationShowH3: !!locationHeadingVisible[3],
+    locationShowH4: !!locationHeadingVisible[4],
+    locationShowH5: !!locationHeadingVisible[5],
+    locationShowH6: !!locationHeadingVisible[6],
+    headingColorH1: headingColors[1] || DEFAULT_HEADING_COLORS[1],
+    headingColorH2: headingColors[2] || DEFAULT_HEADING_COLORS[2],
+    headingColorH3: headingColors[3] || DEFAULT_HEADING_COLORS[3],
+    headingColorH4: headingColors[4] || DEFAULT_HEADING_COLORS[4],
+    headingColorH5: headingColors[5] || DEFAULT_HEADING_COLORS[5],
+    headingColorH6: headingColors[6] || DEFAULT_HEADING_COLORS[6],
+    headingFontH1: headingFonts[1] || DEFAULT_HEADING_FONTS[1],
+    headingFontH2: headingFonts[2] || DEFAULT_HEADING_FONTS[2],
+    headingFontH3: headingFonts[3] || DEFAULT_HEADING_FONTS[3],
+    headingFontH4: headingFonts[4] || DEFAULT_HEADING_FONTS[4],
+    headingFontH5: headingFonts[5] || DEFAULT_HEADING_FONTS[5],
+    headingFontH6: headingFonts[6] || DEFAULT_HEADING_FONTS[6],
+    headingFamilyH1: headingFamilies[1] || '',
+    headingFamilyH2: headingFamilies[2] || '',
+    headingFamilyH3: headingFamilies[3] || '',
+    headingFamilyH4: headingFamilies[4] || '',
+    headingFamilyH5: headingFamilies[5] || '',
+    headingFamilyH6: headingFamilies[6] || '',
+    defaultDocumentFont: defaultDocumentFont || ''
+  }
+}
+
+function applyTemplateSettings(template) {
+  const safe = normalizeTemplateMap({ __tmp: template }).__tmp
+  if (!safe) return
+  advancedMenu = !!safe.advancedMenu
+  locationHeadingVisible = {
+    1: safe.locationShowH1 !== false,
+    2: safe.locationShowH2 !== false,
+    3: safe.locationShowH3 !== false,
+    4: safe.locationShowH4 !== false,
+    5: safe.locationShowH5 !== false,
+    6: safe.locationShowH6 !== false
+  }
+  headingColors = normalizeHeadingColorMap({
+    1: safe.headingColorH1,
+    2: safe.headingColorH2,
+    3: safe.headingColorH3,
+    4: safe.headingColorH4,
+    5: safe.headingColorH5,
+    6: safe.headingColorH6
+  })
+  headingFonts = normalizeHeadingFontMap({
+    1: safe.headingFontH1,
+    2: safe.headingFontH2,
+    3: safe.headingFontH3,
+    4: safe.headingFontH4,
+    5: safe.headingFontH5,
+    6: safe.headingFontH6
+  })
+  headingFamilies = normalizeHeadingFamilyMap({
+    1: safe.headingFamilyH1,
+    2: safe.headingFamilyH2,
+    3: safe.headingFamilyH3,
+    4: safe.headingFamilyH4,
+    5: safe.headingFamilyH5,
+    6: safe.headingFamilyH6
+  })
+  defaultDocumentFont = String(safe.defaultDocumentFont || '').trim()
+  updateAdvancedMenuToggleUi()
+  updateLocationHeadingToggleUi()
+  updateReadMenuButtons()
+  applyHeadingColors()
+  applyHeadingFonts()
+  applyHeadingFamilies()
+  applyDefaultDocumentFont()
+  updateHeaderColorItemUi()
+  updateHeadingFontInputUi()
+  updateHeaderFontItemUi()
+  updateBreadcrumb()
+  if (viewDefaultFontSelect) {
+    const current = defaultDocumentFont
+    if (current && !Array.from(viewDefaultFontSelect.options).some((opt) => opt.value === current)) {
+      const custom = document.createElement('option')
+      custom.value = current
+      custom.textContent = `${current} (현재)`
+      viewDefaultFontSelect.appendChild(custom)
+    }
+    viewDefaultFontSelect.value = current
+  }
+  setConsoleVisibility(safe.consoleVisible !== false)
+}
+
+function updateHeaderFontItemUi() {
+  headerFontItems.forEach((item) => {
+    const level = Number(item.dataset.level)
+    const family = String(headingFamilies[level] || '').trim()
+    item.title = family ? `헤더${level} 폰트: ${family}` : `헤더${level} 폰트 선택`
+    if (family) {
+      const escaped = family.replace(/'/g, "\\'")
+      item.style.fontFamily = `'${escaped}'`
+    } else {
+      item.style.fontFamily = ''
+    }
+  })
+}
+
+function closeHeaderColorPalette() {
+  activeHeaderColorLevel = 0
+  if (viewHeaderPalette) viewHeaderPalette.style.display = 'none'
+}
+
+function openHeaderColorPalette(level) {
+  activeHeaderColorLevel = level
+  closeHeaderFontPicker()
+  if (!viewHeaderPalette) return
+  viewHeaderPalette.style.display = 'flex'
+}
+
+function renderHeaderColorPalette() {
+  if (!viewHeaderPalette) return
+  viewHeaderPalette.innerHTML = ''
+  RAINBOW_COLORS.forEach((color, idx) => {
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'breadcrumb-color-dot'
+    btn.dataset.color = color
+    btn.title = `색상 ${idx + 1}`
+    btn.style.background = color
+    btn.addEventListener('click', () => {
+      if (!activeHeaderColorLevel) return
+      headingColors[activeHeaderColorLevel] = color
+      applyHeadingColors()
+      updateHeaderColorItemUi()
+      saveUiSettings()
+      closeHeaderColorPalette()
+    })
+    viewHeaderPalette.appendChild(btn)
+  })
+}
+
+function closeHeaderFontPicker() {
+  activeHeaderFontLevel = 0
+  if (viewHeaderFontPicker) viewHeaderFontPicker.style.display = 'none'
+}
+
+function openHeaderFontPicker(level) {
+  activeHeaderFontLevel = level
+  closeHeaderColorPalette()
+  if (!viewHeaderFontPicker || !viewHeaderFontSelect) return
+  const current = String(headingFamilies[level] || '')
+  viewHeaderFontSelect.dataset.level = String(level)
+  if (current && !Array.from(viewHeaderFontSelect.options).some((opt) => opt.value === current)) {
+    const custom = document.createElement('option')
+    custom.value = current
+    custom.textContent = `${current} (현재)`
+    viewHeaderFontSelect.appendChild(custom)
+  }
+  viewHeaderFontSelect.value = current
+  viewHeaderFontPicker.style.display = 'block'
+}
+
+function renderHeaderFontPickerOptions() {
+  if (viewHeaderFontSelect) {
+    viewHeaderFontSelect.innerHTML = ''
+    const base = document.createElement('option')
+    base.value = ''
+    base.textContent = '기본 폰트(문서)'
+    viewHeaderFontSelect.appendChild(base)
+    availableSystemFonts.forEach((font) => {
+      const opt = document.createElement('option')
+      opt.value = font
+      opt.textContent = font
+      viewHeaderFontSelect.appendChild(opt)
+    })
+  }
+  if (viewDefaultFontSelect) {
+    viewDefaultFontSelect.innerHTML = ''
+    const base = document.createElement('option')
+    base.value = ''
+    base.textContent = '문서 기본 폰트: 앱 기본'
+    viewDefaultFontSelect.appendChild(base)
+    availableSystemFonts.forEach((font) => {
+      const opt = document.createElement('option')
+      opt.value = font
+      opt.textContent = font
+      viewDefaultFontSelect.appendChild(opt)
+    })
+  }
+}
+
+async function loadSystemFonts() {
+  try {
+    const result = await ipcRenderer.invoke('app:listSystemFonts')
+    if (result?.ok && Array.isArray(result.fonts)) {
+      availableSystemFonts = Array.from(new Set(result.fonts.map((f) => String(f || '').trim()).filter(Boolean)))
+    }
+  } catch (_) {}
+  if (!availableSystemFonts.length) {
+    availableSystemFonts = ['맑은 고딕', 'Malgun Gothic', 'Arial', 'Times New Roman', 'Consolas']
+  }
+  renderHeaderFontPickerOptions()
+}
 
 function appendDebugLog(level, message) {
   if (!debugConsoleBody) return
@@ -169,7 +600,8 @@ function setConsoleVisibility(nextVisible) {
   isConsoleVisible = !!nextVisible
   if (!debugConsole) return
   debugConsole.classList.toggle('hidden', !isConsoleVisible)
-  if (btnConsoleToggle) btnConsoleToggle.classList.toggle('active', isConsoleVisible)
+  if (consoleMenuSwitch) consoleMenuSwitch.checked = isConsoleVisible
+  if (consoleMenuText) consoleMenuText.textContent = `콘솔: ${isConsoleVisible ? '켬' : '끔'}`
 }
 
 function splitEditableLine(line) {
@@ -552,7 +984,7 @@ function annotateSourceLines(content) {
     if (inFence) continue
 
     const h = parseHeadingLine(line)
-    if (h && h.level >= 1 && h.level <= 4) {
+    if (h && h.level >= 1 && h.level <= 6) {
       headingSrc.push({ line: i, level: h.level })
       continue
     }
@@ -615,7 +1047,7 @@ function annotateSourceLines(content) {
     mapBySequence(elements, ranges)
   }
 
-  const domHeadings = Array.from(markdownBody.querySelectorAll('h1, h2, h3, h4'))
+  const domHeadings = Array.from(markdownBody.querySelectorAll('h1, h2, h3, h4, h5, h6'))
   let hCursor = 0
   for (const el of domHeadings) {
     const level = Number(el.tagName[1])
@@ -820,19 +1252,6 @@ function jumpToSourceLine(sourceLine) {
   return true
 }
 
-async function openGoToLineDialog() {
-  const current = getCurrentSourceLineFromSelection()
-  const initial = Number.isInteger(current) && current >= 0 ? String(current + 1) : ''
-  const value = await askTextEdit('줄 이동: 표시할 줄 번호 입력', initial)
-  if (value === null) return
-  const lineNumber = Number(String(value).trim())
-  if (!Number.isInteger(lineNumber) || lineNumber < 1) {
-    showErrorModal('줄 번호는 1 이상의 정수로 입력해 주세요.')
-    return
-  }
-  const ok = jumpToSourceLine(lineNumber - 1)
-  if (!ok) showErrorModal('해당 줄로 이동할 수 없습니다.')
-}
 
 function hideTocContextMenu() {
   tocContextMenu.style.display = 'none'
@@ -923,14 +1342,26 @@ function updateReadMenuButtons() {
   const htmlClipText = `HTML 클립: ${readHtmlClip ? '켬' : '끔'}`
   const labelText = `라벨 감추기: ${readHideLabels ? '켬' : '끔'}`
   const copyText = `자동 복사: ${readAutoCopy ? '켬' : '끔'}`
+  const stripText = `번호삭제/클립보드: ${readStripNumbers ? '켬' : '끔'}`
   readToggleAutoBlock.textContent = blockText
   readToggleHtmlClip.textContent = htmlClipText
   readToggleLabels.textContent = labelText
   readToggleAutoCopy.textContent = copyText
+  if (readToggleStripNumbers) readToggleStripNumbers.textContent = stripText
   readToggleAutoBlock.classList.toggle('is-on', readAutoBlockSelect)
   readToggleHtmlClip.classList.toggle('is-on', readHtmlClip)
   readToggleLabels.classList.toggle('is-on', readHideLabels)
   readToggleAutoCopy.classList.toggle('is-on', readAutoCopy)
+  if (readToggleStripNumbers) readToggleStripNumbers.classList.toggle('is-on', readStripNumbers)
+  // 복사 드롭다운 메뉴 동기화
+  if (menuAutoBlockText) menuAutoBlockText.textContent = `블럭지정: ${readAutoBlockSelect ? '자동' : '수동'}`
+  if (menuAutoBlockSwitch) menuAutoBlockSwitch.checked = readAutoBlockSelect
+  if (menuHtmlClipText) menuHtmlClipText.textContent = `HTML 클립: ${readHtmlClip ? '켬' : '끔'}`
+  if (menuHtmlClipSwitch) menuHtmlClipSwitch.checked = readHtmlClip
+  if (menuHideLabelsText) menuHideLabelsText.textContent = `라벨 감추기: ${readHideLabels ? '켬' : '끔'}`
+  if (menuHideLabelsSwitch) menuHideLabelsSwitch.checked = readHideLabels
+  if (menuAutoCopyText) menuAutoCopyText.textContent = `자동 복사: ${readAutoCopy ? '켬' : '끔'}`
+  if (menuAutoCopySwitch) menuAutoCopySwitch.checked = readAutoCopy
 }
 
 function showReadContextMenu(x, y) {
@@ -969,7 +1400,21 @@ function applyReadVisualOptions() {
 
 function updateAdvancedMenuToggleUi() {
   if (advancedMenuSwitch) advancedMenuSwitch.checked = advancedMenu
-  if (advancedMenuText) advancedMenuText.textContent = `고급메뉴: ${advancedMenu ? '켬' : '끔'}`
+  if (advancedMenuText) advancedMenuText.textContent = `비활성메뉴(고급메뉴): ${advancedMenu ? '켬' : '끔'}`
+}
+
+function updateLocationHeadingToggleUi() {
+  if (locationH1Switch) locationH1Switch.checked = !!locationHeadingVisible[1]
+  if (locationH2Switch) locationH2Switch.checked = !!locationHeadingVisible[2]
+  if (locationH3Switch) locationH3Switch.checked = !!locationHeadingVisible[3]
+  if (locationH4Switch) locationH4Switch.checked = !!locationHeadingVisible[4]
+  if (locationH5Switch) locationH5Switch.checked = !!locationHeadingVisible[5]
+  if (locationH6Switch) locationH6Switch.checked = !!locationHeadingVisible[6]
+}
+
+function updateStripNumbersUi() {
+  if (stripNumbersSwitch) stripNumbersSwitch.checked = readStripNumbers
+  if (stripNumbersText) stripNumbersText.textContent = `번호삭제/클립보드: ${readStripNumbers ? '켬' : '끔'}`
 }
 
 function collectUiSettings() {
@@ -981,7 +1426,36 @@ function collectUiSettings() {
     readHideLabels,
     readAutoCopy,
     readAutoBlockSelect,
-    readHtmlClip
+    readHtmlClip,
+    readStripNumbers,
+    locationShowH1: !!locationHeadingVisible[1],
+    locationShowH2: !!locationHeadingVisible[2],
+    locationShowH3: !!locationHeadingVisible[3],
+    locationShowH4: !!locationHeadingVisible[4],
+    locationShowH5: !!locationHeadingVisible[5],
+    locationShowH6: !!locationHeadingVisible[6],
+    headingColorH1: headingColors[1] || DEFAULT_HEADING_COLORS[1],
+    headingColorH2: headingColors[2] || DEFAULT_HEADING_COLORS[2],
+    headingColorH3: headingColors[3] || DEFAULT_HEADING_COLORS[3],
+    headingColorH4: headingColors[4] || DEFAULT_HEADING_COLORS[4],
+    headingColorH5: headingColors[5] || DEFAULT_HEADING_COLORS[5],
+    headingColorH6: headingColors[6] || DEFAULT_HEADING_COLORS[6],
+    headingFontH1: headingFonts[1] || DEFAULT_HEADING_FONTS[1],
+    headingFontH2: headingFonts[2] || DEFAULT_HEADING_FONTS[2],
+    headingFontH3: headingFonts[3] || DEFAULT_HEADING_FONTS[3],
+    headingFontH4: headingFonts[4] || DEFAULT_HEADING_FONTS[4],
+    headingFontH5: headingFonts[5] || DEFAULT_HEADING_FONTS[5],
+    headingFontH6: headingFonts[6] || DEFAULT_HEADING_FONTS[6],
+    headingFamilyH1: headingFamilies[1] || '',
+    headingFamilyH2: headingFamilies[2] || '',
+    headingFamilyH3: headingFamilies[3] || '',
+    headingFamilyH4: headingFamilies[4] || '',
+    headingFamilyH5: headingFamilies[5] || '',
+    headingFamilyH6: headingFamilies[6] || '',
+    defaultDocumentFont: defaultDocumentFont || '',
+    consoleVisible: isConsoleVisible,
+    settingTemplates,
+    activeTemplateName
   }
 }
 
@@ -1003,9 +1477,67 @@ function applyUiSettings(settings = {}) {
   readAutoCopy = !!settings.readAutoCopy
   readAutoBlockSelect = settings.readAutoBlockSelect !== false  // 기본값 true
   readHtmlClip = !!settings.readHtmlClip
+  readStripNumbers = !!settings.readStripNumbers
+  locationHeadingVisible = {
+    1: settings.locationShowH1 !== false,
+    2: settings.locationShowH2 !== false,
+    3: settings.locationShowH3 !== false,
+    4: settings.locationShowH4 !== false,
+    5: settings.locationShowH5 !== false,
+    6: settings.locationShowH6 !== false
+  }
+  headingColors = normalizeHeadingColorMap({
+    1: isHexColor(settings.headingColorH1) ? String(settings.headingColorH1).toLowerCase() : '',
+    2: isHexColor(settings.headingColorH2) ? String(settings.headingColorH2).toLowerCase() : '',
+    3: isHexColor(settings.headingColorH3) ? String(settings.headingColorH3).toLowerCase() : '',
+    4: isHexColor(settings.headingColorH4) ? String(settings.headingColorH4).toLowerCase() : '',
+    5: isHexColor(settings.headingColorH5) ? String(settings.headingColorH5).toLowerCase() : '',
+    6: isHexColor(settings.headingColorH6) ? String(settings.headingColorH6).toLowerCase() : ''
+  })
+  headingFonts = normalizeHeadingFontMap({
+    1: settings.headingFontH1,
+    2: settings.headingFontH2,
+    3: settings.headingFontH3,
+    4: settings.headingFontH4,
+    5: settings.headingFontH5,
+    6: settings.headingFontH6
+  })
+  headingFamilies = normalizeHeadingFamilyMap({
+    1: settings.headingFamilyH1,
+    2: settings.headingFamilyH2,
+    3: settings.headingFamilyH3,
+    4: settings.headingFamilyH4,
+    5: settings.headingFamilyH5,
+    6: settings.headingFamilyH6
+  })
+  defaultDocumentFont = String(settings.defaultDocumentFont || '').trim()
+  settingTemplates = normalizeTemplateMap(settings.settingTemplates || {})
+  activeTemplateName = String(settings.activeTemplateName || '').trim()
   updateAdvancedMenuToggleUi()
+  updateLocationHeadingToggleUi()
+  updateStripNumbersUi()
   updateReadMenuButtons()
   applyReadVisualOptions()
+  applyHeadingColors()
+  applyHeadingFonts()
+  applyHeadingFamilies()
+  applyDefaultDocumentFont()
+  renderHeaderColorPalette()
+  updateHeaderColorItemUi()
+  updateHeadingFontInputUi()
+  updateHeaderFontItemUi()
+  if (viewDefaultFontSelect) {
+    const current = defaultDocumentFont
+    if (current && !Array.from(viewDefaultFontSelect.options).some((opt) => opt.value === current)) {
+      const custom = document.createElement('option')
+      custom.value = current
+      custom.textContent = `${current} (현재)`
+      viewDefaultFontSelect.appendChild(custom)
+    }
+    viewDefaultFontSelect.value = current
+  }
+  renderTemplateOptions()
+  setConsoleVisibility(settings.consoleVisible !== false)
   setReadMode(!!settings.readMode)
 }
 
@@ -1181,6 +1713,15 @@ function normalizeCopiedText(text) {
     .trim()
 }
 
+// 번호 삭제 모드: 줄 앞 번호·로마숫자 접두 제거 (원문자 ①②③ 는 유지)
+// 제거 대상: "(1) " / "1. " / "1) " / "IV. " (로마숫자+점+공백)
+// 조건: 줄 맨 앞 + 뒤에 공백 1개 이상 있을 때만 → 공백까지 제거
+function stripNumberLabels(text) {
+  return text
+    .replace(/^[ \t]*(?:\(\d+\)|\d+[.)]|[IVXLCDMivxlcdm]+\.) +/gm, '')
+    .trim()
+}
+
 function toCRLF(text) {
   return String(text || '').replace(/\r\n/g, '\n').trim().replace(/\n/g, '\r\n')
 }
@@ -1350,7 +1891,8 @@ function expandSelectionToBlocks() {
 
 async function syncReadSelectionAutoCopy() {
   if (!isReadMode || !readAutoCopy) return
-  const text = getSelectionTextWithoutLabels()
+  const raw = getSelectionTextWithoutLabels()
+  const text = readStripNumbers ? stripNumberLabels(raw) : raw
   const normalized = text.trim()
   if (!normalized || normalized === lastAutoCopiedText) return
   const ok = await copyTextToClipboard(text, '자동블록복사')
@@ -1614,12 +2156,82 @@ function setTocFocus(index) {
   else if (elRect.bottom > panelRect.bottom) tocList.scrollTop += elRect.bottom - panelRect.bottom + 8
 }
 
+function hasTocChildren(idx) {
+  const myLevel = tocItems[idx].level
+  for (let k = idx + 1; k < tocItems.length; k++) {
+    if (tocItems[k].level <= myLevel) break
+    return true
+  }
+  return false
+}
+
+// 접힌 항목 idx 기준으로 숨길 TOC 인덱스 범위 계산
+// (idx+1 ~ 다음 동급 이상 헤딩 직전까지)
+function getHiddenTocRange() {
+  const hiddenSet = new Set()
+  collapsedTocItems.forEach((idx) => {
+    const myLevel = tocItems[idx].level
+    for (let k = idx + 1; k < tocItems.length; k++) {
+      if (tocItems[k].level <= myLevel) break
+      hiddenSet.add(k)
+    }
+  })
+  return hiddenSet
+}
+
+function updateTocVisibility() {
+  const hiddenSet = getHiddenTocRange()
+  tocItems.forEach(({ el }, i) => {
+    el.style.display = hiddenSet.has(i) ? 'none' : ''
+  })
+  updateViewVisibility()
+}
+
+// 접힌 헤딩에 속한 뷰 섹션 숨김/표시 (범위 기반)
+function updateViewVisibility() {
+  const children = Array.from(markdownBody.children)
+  const hidden = new Array(children.length).fill(false)
+
+  collapsedTocItems.forEach((idx) => {
+    const startHeading = tocItems[idx].heading
+    const startPos = children.indexOf(startHeading)
+    if (startPos < 0) return
+    const myLevel = tocItems[idx].level
+
+    // 다음 동급 이상 헤딩 위치 탐색
+    let endPos = children.length
+    for (let k = idx + 1; k < tocItems.length; k++) {
+      if (tocItems[k].level <= myLevel) {
+        endPos = children.indexOf(tocItems[k].heading)
+        break
+      }
+    }
+    for (let p = startPos + 1; p < endPos; p++) hidden[p] = true
+  })
+
+  children.forEach((child, p) => {
+    child.style.display = hidden[p] ? 'none' : ''
+  })
+}
+
+function toggleTocItem(idx) {
+  if (collapsedTocItems.has(idx)) {
+    collapsedTocItems.delete(idx)
+  } else {
+    collapsedTocItems.add(idx)
+  }
+  const btn = tocItems[idx].el.querySelector('.toc-toggle')
+  if (btn) btn.textContent = collapsedTocItems.has(idx) ? '▶' : '▼'
+  updateTocVisibility()
+}
+
 // TOC 생성
 function buildToc() {
   const headings = markdownBody.querySelectorAll('h1, h2, h3, h4')
   tocList.innerHTML = ''
   tocItems = []
   focusedTocIndex = -1
+  collapsedTocItems.clear()
 
   if (headings.length === 0) {
     tocPanel.style.display = 'none'
@@ -1632,11 +2244,16 @@ function buildToc() {
 
     const item = document.createElement('div')
     item.className = `toc-item toc-${h.tagName.toLowerCase()}`
-    item.textContent = h.textContent
     item.title = h.textContent
     item.tabIndex = -1
 
-    item.addEventListener('click', () => {
+    const textSpan = document.createElement('span')
+    textSpan.className = 'toc-item-text'
+    textSpan.textContent = h.textContent
+    item.appendChild(textSpan)
+
+    item.addEventListener('click', (e) => {
+      if (e.target.classList.contains('toc-toggle')) return
       h.scrollIntoView({ behavior: 'smooth', block: 'start' })
       setTocFocus(i)
     })
@@ -1664,6 +2281,22 @@ function buildToc() {
     tocList.appendChild(item)
   })
 
+  // 2차 패스: 자식이 있는 항목에 토글 버튼 삽입
+  tocItems.forEach(({ el }, i) => {
+    const icon = document.createElement('span')
+    if (hasTocChildren(i)) {
+      icon.className = 'toc-toggle'
+      icon.textContent = '▼'
+      icon.addEventListener('click', (e) => {
+        e.stopPropagation()
+        toggleTocItem(i)
+      })
+    } else {
+      icon.className = 'toc-toggle-spacer'
+    }
+    el.insertBefore(icon, el.firstChild)
+  })
+
   // TOC에 키보드 포커스 가능하게
   tocList.tabIndex = 0
 
@@ -1672,8 +2305,41 @@ function buildToc() {
 }
 
 // 스크롤 위치에 따라 활성 TOC 항목 업데이트
+function updateBreadcrumb() {
+  if (!breadcrumbBar) return
+  const scrollTop = markdownView.scrollTop + 80
+  // 각 레벨별 가장 최근 지나친 헤딩 추적 (h1~h4 기준)
+  const current = {}
+  const allHeadings = Array.from(markdownBody.querySelectorAll('h1, h2, h3, h4, h5, h6'))
+  for (const h of allHeadings) {
+    if (h.offsetTop > scrollTop) break
+    const lv = Number(h.tagName[1])
+    current[lv] = (h.textContent || '').trim()
+    // 하위 레벨 초기화 (새 상위 헤딩이 나오면 하위는 리셋)
+    for (let deeper = lv + 1; deeper <= 6; deeper++) delete current[deeper]
+  }
+  const enabledLevels = [1, 2, 3, 4, 5, 6].filter((lv) => !!locationHeadingVisible[lv])
+  const chain = enabledLevels
+    .map((lv) => ({ level: lv, text: current[lv] }))
+    .filter((x) => !!x.text)
+  if (!chain.length) {
+    breadcrumbBar.innerHTML = ''
+    return
+  }
+  breadcrumbBar.innerHTML = chain.map((entry, i) => {
+    const isLast = i === chain.length - 1
+    const text = String(entry.text || '')
+    const level = Number(entry.level || 1)
+    const item = `<span class="breadcrumb-item bc-lv${level}${isLast ? ' bc-last' : ''}" title="${text}">${text}</span>`
+    return i < chain.length - 1 ? item + '<span class="breadcrumb-sep">›</span>' : item
+  }).join('')
+}
+
 function updateActiveToc() {
-  if (!tocItems.length) return
+  if (!tocItems.length) {
+    updateBreadcrumb()
+    return
+  }
 
   let activeIndex = 0
   const scrollTop = markdownView.scrollTop + 80
@@ -1682,9 +2348,26 @@ function updateActiveToc() {
     if (heading.offsetTop <= scrollTop) activeIndex = i
   })
 
+  let prevActive = -1
   tocItems.forEach(({ el }, i) => {
+    if (el.classList.contains('active')) prevActive = i
     el.classList.toggle('active', i === activeIndex)
   })
+
+  updateBreadcrumb()
+
+  // 활성 항목이 바뀌면: 포커스 인덱스 동기화 + TOC 패널 직접 스크롤
+  if (prevActive !== activeIndex) {
+    focusedTocIndex = activeIndex
+    const activeEl = tocItems[activeIndex].el
+    const itemTop = activeEl.offsetTop
+    const itemBottom = itemTop + activeEl.offsetHeight
+    const listTop = tocList.scrollTop
+    const listBottom = listTop + tocList.clientHeight
+    if (itemTop < listTop || itemBottom > listBottom) {
+      tocList.scrollTop = itemTop - tocList.clientHeight / 2 + activeEl.offsetHeight / 2
+    }
+  }
 }
 
 function renderMarkdown(content) {
@@ -1724,6 +2407,7 @@ function showFile(data) {
   lastOpenedFilePath = data.filePath
   diskContent = data.content
   workingContent = data.content
+  if (data.docStats) currentDocStats = data.docStats
   setDirty(false)
 
   renderMarkdown(workingContent)
@@ -1731,6 +2415,15 @@ function showFile(data) {
 }
 
 async function initializeAppState() {
+  await loadSystemFonts()
+  renderHeaderColorPalette()
+  applyHeadingColors()
+  applyHeadingFonts()
+  applyHeadingFamilies()
+  applyDefaultDocumentFont()
+  updateHeaderColorItemUi()
+  updateHeadingFontInputUi()
+  updateHeaderFontItemUi()
   setReadMode(false)
   updateAdvancedMenuToggleUi()
   updateReadMenuButtons()
@@ -1810,12 +2503,344 @@ if (readToggleAutoCopy) {
   })
 }
 
+if (readToggleStripNumbers) {
+  readToggleStripNumbers.addEventListener('click', () => {
+    readStripNumbers = !readStripNumbers
+    updateStripNumbersUi()
+    updateReadMenuButtons()
+    saveUiSettings()
+  })
+}
+
+if (stripNumbersSwitch) {
+  stripNumbersSwitch.addEventListener('change', () => {
+    readStripNumbers = !!stripNumbersSwitch.checked
+    updateStripNumbersUi()
+    updateReadMenuButtons()
+    saveUiSettings()
+  })
+}
+
+if (locationH1Switch) {
+  locationH1Switch.addEventListener('change', () => {
+    locationHeadingVisible[1] = !!locationH1Switch.checked
+    updateLocationHeadingToggleUi()
+    updateBreadcrumb()
+    saveUiSettings()
+  })
+}
+if (locationH2Switch) {
+  locationH2Switch.addEventListener('change', () => {
+    locationHeadingVisible[2] = !!locationH2Switch.checked
+    updateLocationHeadingToggleUi()
+    updateBreadcrumb()
+    saveUiSettings()
+  })
+}
+if (locationH3Switch) {
+  locationH3Switch.addEventListener('change', () => {
+    locationHeadingVisible[3] = !!locationH3Switch.checked
+    updateLocationHeadingToggleUi()
+    updateBreadcrumb()
+    saveUiSettings()
+  })
+}
+if (locationH4Switch) {
+  locationH4Switch.addEventListener('change', () => {
+    locationHeadingVisible[4] = !!locationH4Switch.checked
+    updateLocationHeadingToggleUi()
+    updateBreadcrumb()
+    saveUiSettings()
+  })
+}
+if (locationH5Switch) {
+  locationH5Switch.addEventListener('change', () => {
+    locationHeadingVisible[5] = !!locationH5Switch.checked
+    updateLocationHeadingToggleUi()
+    updateBreadcrumb()
+    saveUiSettings()
+  })
+}
+if (locationH6Switch) {
+  locationH6Switch.addEventListener('change', () => {
+    locationHeadingVisible[6] = !!locationH6Switch.checked
+    updateLocationHeadingToggleUi()
+    updateBreadcrumb()
+    saveUiSettings()
+  })
+}
+
+if (headerColorItems.length > 0) {
+  headerColorItems.forEach((item) => {
+    item.addEventListener('click', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const level = Number(item.dataset.level)
+      if (!Number.isInteger(level) || level < 1 || level > 6) return
+      if (activeHeaderColorLevel === level) {
+        closeHeaderColorPalette()
+      } else {
+        openHeaderColorPalette(level)
+      }
+    })
+  })
+}
+
+if (btnResetHeaderColors) {
+  btnResetHeaderColors.addEventListener('click', (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    headingColors = { ...DEFAULT_HEADING_COLORS }
+    closeHeaderColorPalette()
+    applyHeadingColors()
+    updateHeaderColorItemUi()
+    saveUiSettings()
+  })
+}
+
+if (btnResetHeaderLocation) {
+  btnResetHeaderLocation.addEventListener('click', (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    locationHeadingVisible = { 1: true, 2: true, 3: true, 4: true, 5: true, 6: true }
+    updateLocationHeadingToggleUi()
+    updateBreadcrumb()
+    saveUiSettings()
+  })
+}
+
+if (btnResetHeaderFamilies) {
+  btnResetHeaderFamilies.addEventListener('click', (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    headingFamilies = { 1: '', 2: '', 3: '', 4: '', 5: '', 6: '' }
+    closeHeaderFontPicker()
+    applyHeadingFamilies()
+    updateHeaderFontItemUi()
+    saveUiSettings()
+  })
+}
+
+for (let level = 1; level <= 6; level++) {
+  const input = headingFontInputs[level]
+  if (!input) continue
+  input.addEventListener('change', () => {
+    const value = Number(input.value)
+    headingFonts[level] = Number.isFinite(value) && value >= 12 && value <= 48
+      ? Math.round(value)
+      : DEFAULT_HEADING_FONTS[level]
+    updateHeadingFontInputUi()
+    applyHeadingFonts()
+    saveUiSettings()
+  })
+}
+
+if (btnResetHeaderFonts) {
+  btnResetHeaderFonts.addEventListener('click', (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    headingFonts = { ...DEFAULT_HEADING_FONTS }
+    updateHeadingFontInputUi()
+    applyHeadingFonts()
+    saveUiSettings()
+  })
+}
+
+if (headerFontItems.length > 0) {
+  headerFontItems.forEach((item) => {
+    item.addEventListener('click', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const level = Number(item.dataset.level)
+      if (!Number.isInteger(level) || level < 1 || level > 6) return
+      if (activeHeaderFontLevel === level) {
+        closeHeaderFontPicker()
+      } else {
+        openHeaderFontPicker(level)
+      }
+    })
+  })
+}
+
+if (viewHeaderFontPicker) {
+  viewHeaderFontPicker.addEventListener('click', (e) => {
+    e.stopPropagation()
+  })
+  viewHeaderFontPicker.addEventListener('mousedown', (e) => {
+    e.stopPropagation()
+  })
+}
+
+if (viewHeaderFontSelect) {
+  viewHeaderFontSelect.addEventListener('click', (e) => {
+    e.stopPropagation()
+  })
+  viewHeaderFontSelect.addEventListener('mousedown', (e) => {
+    e.stopPropagation()
+  })
+  viewHeaderFontSelect.addEventListener('change', () => {
+    const level = Number(viewHeaderFontSelect.dataset.level || activeHeaderFontLevel || 0)
+    if (!Number.isInteger(level) || level < 1 || level > 6) return
+    headingFamilies[level] = String(viewHeaderFontSelect.value || '').trim()
+    applyHeadingFamilies()
+    updateHeaderFontItemUi()
+    saveUiSettings()
+  })
+}
+
+if (viewDefaultFontSelect) {
+  viewDefaultFontSelect.addEventListener('click', (e) => {
+    e.stopPropagation()
+  })
+  viewDefaultFontSelect.addEventListener('mousedown', (e) => {
+    e.stopPropagation()
+  })
+  viewDefaultFontSelect.addEventListener('change', () => {
+    defaultDocumentFont = String(viewDefaultFontSelect.value || '').trim()
+    applyDefaultDocumentFont()
+    saveUiSettings()
+  })
+}
+
+if (viewTemplateName) {
+  viewTemplateName.addEventListener('click', (e) => e.stopPropagation())
+  viewTemplateName.addEventListener('mousedown', (e) => e.stopPropagation())
+}
+
+if (btnTemplateSave) {
+  btnTemplateSave.addEventListener('click', (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const name = String(viewTemplateName ? viewTemplateName.value : '').trim().slice(0, 40)
+    if (!name) {
+      showErrorModal('템플릿 이름을 입력해 주세요.')
+      return
+    }
+    settingTemplates[name] = collectTemplateSettings()
+    activeTemplateName = name
+    renderTemplateOptions()
+    if (viewTemplateSelect) viewTemplateSelect.value = name
+    if (viewTemplateName) viewTemplateName.value = ''
+    saveUiSettings()
+    showSuccessToast(`템플릿 저장 완료: ${name}`)
+  })
+}
+
+if (viewTemplateSelect) {
+  viewTemplateSelect.addEventListener('click', (e) => e.stopPropagation())
+  viewTemplateSelect.addEventListener('mousedown', (e) => e.stopPropagation())
+  viewTemplateSelect.addEventListener('change', () => {
+    const name = String(viewTemplateSelect.value || '').trim()
+    if (!name || !settingTemplates[name]) return
+    activeTemplateName = name
+    applyTemplateSettings(settingTemplates[name])
+    saveUiSettings()
+    showSuccessToast(`템플릿 적용 완료: ${name}`)
+  })
+}
+
+// 복사 드롭다운 메뉴 이벤트
+if (menuAutoBlockSwitch) {
+  menuAutoBlockSwitch.addEventListener('change', () => {
+    readAutoBlockSelect = !!menuAutoBlockSwitch.checked
+    if (!readAutoBlockSelect) lastReadSelectedBlocks = []
+    updateReadMenuButtons()
+    saveUiSettings()
+  })
+}
+if (menuHtmlClipSwitch) {
+  menuHtmlClipSwitch.addEventListener('change', () => {
+    readHtmlClip = !!menuHtmlClipSwitch.checked
+    updateReadMenuButtons()
+    saveUiSettings()
+  })
+}
+if (menuHideLabelsSwitch) {
+  menuHideLabelsSwitch.addEventListener('change', () => {
+    readHideLabels = !!menuHideLabelsSwitch.checked
+    applyReadVisualOptions()
+    updateReadMenuButtons()
+    saveUiSettings()
+  })
+}
+if (menuAutoCopySwitch) {
+  menuAutoCopySwitch.addEventListener('change', () => {
+    readAutoCopy = !!menuAutoCopySwitch.checked
+    if (!readAutoCopy) lastAutoCopiedText = ''
+    updateReadMenuButtons()
+    if (readAutoCopy) syncReadSelectionAutoCopy()
+    saveUiSettings()
+  })
+}
+
+// =====================
+// 드롭다운 메뉴 열기/닫기
+// =====================
+const menuDropdowns = [
+  { btnId: 'menuBtnFile', dropId: 'menuDropFile' },
+  { btnId: 'menuBtnView', dropId: 'menuDropView' },
+  { btnId: 'menuBtnCopy', dropId: 'menuDropCopy' },
+].map(({ btnId, dropId }) => ({
+  btn: document.getElementById(btnId),
+  drop: document.getElementById(dropId),
+})).filter(({ btn, drop }) => btn && drop)
+
+function closeAllMenuDropdowns() {
+  menuDropdowns.forEach(({ btn, drop }) => {
+    drop.classList.remove('open')
+    btn.classList.remove('open')
+  })
+  closeHeaderColorPalette()
+  closeHeaderFontPicker()
+}
+
+menuDropdowns.forEach(({ btn, drop }) => {
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation()
+    const isOpen = drop.classList.contains('open')
+    closeAllMenuDropdowns()
+    if (!isOpen) {
+      drop.classList.add('open')
+      btn.classList.add('open')
+    }
+  })
+})
+
+if (viewHeaderPalette) {
+  viewHeaderPalette.addEventListener('click', (e) => {
+    e.stopPropagation()
+  })
+}
+
+// 드롭다운 내 버튼 클릭 시 닫기
+// 보기 메뉴는 내부 컨트롤 조작이 많아 클릭해도 닫지 않는다.
+document.querySelectorAll('.menu-dropdown button.menu-drop-item:not(.header-color-item)').forEach((item) => {
+  item.addEventListener('click', () => {
+    if (item.closest('#menuDropView')) return
+    closeAllMenuDropdowns()
+  })
+})
+
+// 바깥 클릭 시 닫기
+document.addEventListener('click', (e) => {
+  const target = e.target
+  if (target && target.closest && (target.closest('.menu-dropdown') || target.closest('.menu-btn'))) {
+    return
+  }
+  closeAllMenuDropdowns()
+})
+
 // TOC 토글
-btnToc.addEventListener('click', () => {
+function toggleTocPanel() {
   tocVisible = !tocVisible
   tocPanel.style.display = tocVisible ? 'flex' : 'none'
   btnToc.classList.toggle('active', tocVisible)
-})
+}
+
+btnToc.addEventListener('click', toggleTocPanel)
+
+const btnTocClose = document.getElementById('btnTocClose')
+if (btnTocClose) btnTocClose.addEventListener('click', toggleTocPanel)
 
 // IPC 이벤트
 ipcRenderer.on('file:loaded', (_, data) => showFile(data))
@@ -1823,6 +2848,7 @@ ipcRenderer.on('file:changed', (_, data) => {
   if (isDirty) return
   diskContent = data.content
   workingContent = data.content
+  if (data.docStats) currentDocStats = data.docStats
   setDirty(false)
   renderMarkdown(workingContent)
 })
@@ -1869,14 +2895,30 @@ btnOpenLarge.addEventListener('click', () => openFileDialogWithDirtyCheck())
 btnSave.addEventListener('click', async () => {
   await saveCurrentFile()
 })
-if (btnMoveLine) {
-  btnMoveLine.addEventListener('click', () => {
-    openGoToLineDialog()
+// 줄 이동 인라인 필드
+const gotoLineInput = document.getElementById('gotoLineInput')
+
+function doGotoLine() {
+  const lineNumber = parseInt(gotoLineInput.value, 10)
+  if (!Number.isInteger(lineNumber) || lineNumber < 1) return
+  const ok = jumpToSourceLine(lineNumber - 1)
+  if (ok) gotoLineInput.blur()
+  else gotoLineInput.select()
+}
+
+if (gotoLineInput) {
+  gotoLineInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); doGotoLine() }
+    if (e.key === 'Escape') { gotoLineInput.value = ''; gotoLineInput.blur() }
   })
 }
-if (btnConsoleToggle) {
-  btnConsoleToggle.addEventListener('click', () => {
-    setConsoleVisibility(!isConsoleVisible)
+
+if (btnMoveLine) {
+  btnMoveLine.addEventListener('click', () => doGotoLine())
+}
+if (consoleMenuSwitch) {
+  consoleMenuSwitch.addEventListener('change', () => {
+    setConsoleVisibility(!!consoleMenuSwitch.checked)
   })
 }
 if (btnConsoleClear) {
@@ -1942,29 +2984,43 @@ tocList.addEventListener('keydown', (e) => {
 
   if (e.key === 'ArrowDown') {
     e.preventDefault()
-    setTocFocus(Math.min(cur + 1, tocItems.length - 1))
+    for (let i = cur + 1; i < tocItems.length; i++) {
+      if (tocItems[i].el.style.display !== 'none') { setTocFocus(i); break }
+    }
 
   } else if (e.key === 'ArrowUp') {
     e.preventDefault()
-    setTocFocus(Math.max(cur - 1, 0))
+    for (let i = cur - 1; i >= 0; i--) {
+      if (tocItems[i].el.style.display !== 'none') { setTocFocus(i); break }
+    }
 
   } else if (e.key === 'ArrowLeft') {
-    // 부모 헤딩: 현재보다 레벨이 낮은(숫자 작은) 이전 항목
     e.preventDefault()
-    for (let i = cur - 1; i >= 0; i--) {
-      if (tocItems[i].level < curLevel) {
-        setTocFocus(i)
-        break
+    // 자식 있고 펼쳐져 있으면 → 접기
+    if (hasTocChildren(cur) && !collapsedTocItems.has(cur)) {
+      toggleTocItem(cur)
+    } else {
+      // 부모 헤딩으로 이동
+      for (let i = cur - 1; i >= 0; i--) {
+        if (tocItems[i].level < curLevel && tocItems[i].el.style.display !== 'none') {
+          setTocFocus(i)
+          break
+        }
       }
     }
 
   } else if (e.key === 'ArrowRight') {
-    // 첫 자식 헤딩: 현재보다 레벨이 높은(숫자 큰) 다음 항목
     e.preventDefault()
-    for (let i = cur + 1; i < tocItems.length; i++) {
-      if (tocItems[i].level > curLevel) {
-        setTocFocus(i)
-        break
+    // 자식 있고 접혀 있으면 → 펼치기
+    if (hasTocChildren(cur) && collapsedTocItems.has(cur)) {
+      toggleTocItem(cur)
+    } else {
+      // 첫 자식으로 이동
+      for (let i = cur + 1; i < tocItems.length; i++) {
+        if (tocItems[i].level > curLevel && tocItems[i].el.style.display !== 'none') {
+          setTocFocus(i)
+          break
+        }
       }
     }
 
@@ -2105,7 +3161,7 @@ markdownView.addEventListener('contextmenu', (e) => {
     }
   }
 
-  const intersectingHeadings = Array.from(markdownBody.querySelectorAll('h1, h2, h3, h4'))
+  const intersectingHeadings = Array.from(markdownBody.querySelectorAll('h1, h2, h3, h4, h5, h6'))
     .filter((el) => range.intersectsNode(el))
   const heading = intersectingHeadings.length > 0 ? intersectingHeadings[0] : null
   if (heading && markdownBody.contains(heading)) {
@@ -2113,15 +3169,20 @@ markdownView.addEventListener('contextmenu', (e) => {
       .map((h) => {
         const sourceLine = Number(h.dataset.srcLine)
         const tocIndex = tocItems.findIndex((item) => item.heading === h)
-        if (tocIndex < 0) return null
+        // TOC에 없는 깊은 헤딩(h5/h6)도 sourceLine이 있으면 포함
+        if (tocIndex < 0 && !Number.isInteger(sourceLine)) return null
         return {
           targetType: 'heading',
-          tocIndex,
+          tocIndex: tocIndex >= 0 ? tocIndex : undefined,
           sourceLine: Number.isInteger(sourceLine) ? sourceLine : undefined
         }
       })
       .filter(Boolean)
-    if (!targets.length) return
+    if (!targets.length) {
+      appendDebugLog('INFO', 'view:contextmenu heading block: no targets, fallback menu')
+      showTocContextMenu(e.clientX, e.clientY, { kind: 'text', targetType: 'line', allowedActions: [] })
+      return
+    }
     const debugBlocks = intersectingHeadings.map((h) => ({
       sourceLine: Number.isInteger(Number(h.dataset.srcLine)) ? Number(h.dataset.srcLine) : undefined,
       text: (h.textContent || '').trim()
@@ -2130,7 +3191,12 @@ markdownView.addEventListener('contextmenu', (e) => {
       isSelectionNearElementEnd(selectedText, (heading.textContent || '').trim())
 
     const first = targets[0]
-    const level = tocItems[first.tocIndex] ? tocItems[first.tocIndex].level : null
+    // TOC에 없는 깊은 헤딩은 toBullet만 지원
+    const hasToclessTarget = targets.some((t) => t.tocIndex === undefined)
+    const level = first.tocIndex !== undefined && tocItems[first.tocIndex] ? tocItems[first.tocIndex].level : Number(heading.tagName[1]) || null
+    const allowedActions = hasToclessTarget
+      ? ['toBullet']
+      : ['editContent', 'shiftUp', 'shiftDown', 'toBullet']
     e.preventDefault()
     showTocContextMenu(e.clientX, e.clientY, {
       kind: 'heading',
@@ -2143,7 +3209,7 @@ markdownView.addEventListener('contextmenu', (e) => {
       debugBlocks,
       anchorElement: heading,
       sourceLine: Number.isInteger(first.sourceLine) ? first.sourceLine : undefined,
-      allowedActions: ['editContent', 'shiftUp', 'shiftDown', 'toBullet']
+      allowedActions
     })
     return
   }
@@ -2167,7 +3233,11 @@ markdownView.addEventListener('contextmenu', (e) => {
         }
       })
       .filter(Boolean)
-    if (!targets.length) return
+    if (!targets.length) {
+      appendDebugLog('INFO', 'view:contextmenu list block: no targets, fallback menu')
+      showTocContextMenu(e.clientX, e.clientY, { kind: 'text', targetType: 'line', allowedActions: [] })
+      return
+    }
     const debugBlocks = targetLis.map((node) => {
       const sourceLine = Number(node.dataset.srcLine)
       const ownText = getListOwnText(node)
@@ -2200,8 +3270,9 @@ markdownView.addEventListener('contextmenu', (e) => {
     return
   }
 
-    // fallthrough: no menu
-    appendDebugLog('INFO', 'view:contextmenu fallthrough no menu match')
+    // fallthrough: show basic menu
+    appendDebugLog('INFO', 'view:contextmenu fallthrough: showing basic menu')
+    showTocContextMenu(e.clientX, e.clientY, { kind: 'text', targetType: 'line', allowedActions: [] })
   } catch (err) {
     appendDebugLog('ERROR', `view:contextmenu error ${err && err.message ? err.message : 'unknown'}`)
     showErrorModal(`우클릭 메뉴 오류\n\n${err && err.message ? err.message : 'unknown error'}`)
@@ -2478,23 +3549,10 @@ document.addEventListener('keydown', (e) => {
   }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'g') {
     e.preventDefault()
-    openGoToLineDialog()
+    if (gotoLineInput) { gotoLineInput.focus(); gotoLineInput.select() }
   }
 })
 
-function getSelectedTables() {
-  // lastReadSelectedBlocks 에 TABLE 이 있으면 우선 사용
-  const fromBlocks = lastReadSelectedBlocks.filter((b) => b.tagName === 'TABLE')
-  if (fromBlocks.length > 0) return fromBlocks
-
-  // 수동 모드일 때: 현재 selection range 에서 교차하는 TABLE 탐색
-  const selection = window.getSelection()
-  if (!selection || selection.rangeCount === 0) return []
-  const range = selection.getRangeAt(0)
-  return Array.from(markdownBody.querySelectorAll('table')).filter((t) => {
-    try { return range.intersectsNode(t) } catch (_) { return false }
-  })
-}
 
 function tableToPlainText(table) {
   return Array.from(table.querySelectorAll('tr'))
@@ -2509,69 +3567,53 @@ function tableToPlainText(table) {
 document.addEventListener('copy', (e) => {
   if (!isReadMode) return
 
-  if (readHtmlClip) {
-    // HTML 클립 켬: 표만 HTML, 나머지 텍스트는 plain text(줄바꿈만)
+  // 자동블록/수동 공통: 복사할 텍스트 수집
+  function getReadCopyText() {
     if (readAutoBlockSelect && lastReadSelectedBlocks.length > 0) {
-      // 자동블록 ON: lastReadSelectedBlocks 사용
-      e.preventDefault()
-      const { clipboard } = require('electron')
-      const tables = lastReadSelectedBlocks.filter((b) => b.tagName === 'TABLE')
-      const textContent = toCRLF(lastReadSelectedBlocks.map((b) => {
+      const lines = lastReadSelectedBlocks.map((b) => {
         if (b.tagName === 'TABLE') return tableToPlainText(b)
         return getBlockTextWithoutLabels(b)
-      }).filter(Boolean).join('\n'))
-      if (tables.length > 0) {
-        const htmlContent = tables.map((t) => t.outerHTML).join('\n')
-        clipboard.write({ html: htmlContent, text: textContent })
-        appendDebugLog('INFO', `[복사:HTML클립] 표${tables.length}개 ${textContent.length}자 — ${textContent.slice(0, 60)}${textContent.length > 60 ? '…' : ''}`)
-      } else {
-        clipboard.write({ text: textContent })
-        appendDebugLog('INFO', `[복사:HTML클립→텍스트] ${textContent.length}자 — ${textContent.slice(0, 60)}${textContent.length > 60 ? '…' : ''}`)
-      }
-    } else {
-      // 자동블록 OFF: 실제 선택 범위에서 표만 HTML로 추출
-      const sel = window.getSelection()
-      if (!sel || sel.rangeCount === 0) return
-      const range = sel.getRangeAt(0)
-      const fragment = range.cloneContents()
-      const wrapper = document.createElement('div')
-      wrapper.appendChild(fragment)
-      wrapper.querySelectorAll('.md-label').forEach((el) => el.remove())
-      const tables = [...wrapper.querySelectorAll('table')]
-      const textContent = toCRLF(normalizeCopiedText(wrapper.innerText || wrapper.textContent || ''))
-      if (!textContent) return
-      e.preventDefault()
-      const { clipboard } = require('electron')
-      if (tables.length > 0) {
-        const htmlContent = tables.map((t) => t.outerHTML).join('\n')
-        clipboard.write({ html: htmlContent, text: textContent })
-        appendDebugLog('INFO', `[복사:HTML클립(수동)] 표${tables.length}개 ${textContent.length}자 — ${textContent.slice(0, 60)}${textContent.length > 60 ? '…' : ''}`)
-      } else {
-        clipboard.write({ text: textContent })
-        appendDebugLog('INFO', `[복사:HTML클립(수동)→텍스트] ${textContent.length}자 — ${textContent.slice(0, 60)}${textContent.length > 60 ? '…' : ''}`)
-      }
+      }).filter(Boolean)
+      return { source: 'autoblock', text: lines.join('\n'), blocks: lastReadSelectedBlocks }
     }
+    const sel = window.getSelection()
+    if (!sel || sel.rangeCount === 0) return { source: 'nosel', text: '' }
+    const range = sel.getRangeAt(0)
+    const fragment = range.cloneContents()
+    const wrapper = document.createElement('div')
+    wrapper.appendChild(fragment)
+    wrapper.querySelectorAll('.md-label').forEach((el) => el.remove())
+    return { source: 'manual', text: normalizeCopiedText(wrapper.innerText || wrapper.textContent || ''), wrapper }
+  }
+
+  const { source, text, blocks, wrapper } = getReadCopyText()
+
+  if (!text) {
+    appendDebugLog('INFO', `[복사:스킵] 선택된 블록 없음 (source=${source})`)
     return
   }
 
-  // HTML 클립 끔: 표만 HTML, 나머지는 텍스트
-  const tables = getSelectedTables()
-  if (tables.length > 0) {
-    e.preventDefault()
-    const { clipboard } = require('electron')
-    const htmlContent = tables.map((t) => t.outerHTML).join('\n')
-    const textContent = toCRLF(tables.map(tableToPlainText).join('\n'))
-    clipboard.write({ html: htmlContent, text: textContent })
-    appendDebugLog('INFO', `[복사:표HTML] ${textContent.length}자 — ${textContent.slice(0, 60)}${textContent.length > 60 ? '…' : ''}`)
-    return
-  }
-
-  const text = getSelectionTextWithoutLabels()
-  if (!text) return
   e.preventDefault()
-  appendDebugLog('INFO', `[일반복사] ${text.length}자 — ${text.slice(0, 60)}${text.length > 60 ? '…' : ''}`)
-  if (e.clipboardData) {
-    e.clipboardData.setData('text/plain', toCRLF(text))
+  const { clipboard } = require('electron')
+
+  // 표 HTML 처리
+  const tables = source === 'autoblock'
+    ? (blocks || []).filter((b) => b.tagName === 'TABLE')
+    : (wrapper ? [...wrapper.querySelectorAll('table')] : [])
+
+  const textContent = toCRLF(readStripNumbers ? stripNumberLabels(text) : text)
+
+  if (tables.length > 0) {
+    const htmlContent = tables.map((t) => t.outerHTML).join('\n')
+    clipboard.write({ html: htmlContent, text: textContent })
+    const label = readHtmlClip ? '[복사:HTML클립]' : '[복사:표HTML]'
+    appendDebugLog('INFO', `${label} 표${tables.length}개 ${textContent.length}자 — ${textContent.slice(0, 60)}${textContent.length > 60 ? '…' : ''}`)
+  } else if (readHtmlClip || source === 'autoblock') {
+    clipboard.write({ text: textContent })
+    appendDebugLog('INFO', `[복사:텍스트] ${textContent.length}자 (${source}) — ${textContent.slice(0, 60)}${textContent.length > 60 ? '…' : ''}`)
+  } else {
+    if (e.clipboardData) e.clipboardData.setData('text/plain', textContent)
+    appendDebugLog('INFO', `[일반복사] ${textContent.length}자 — ${textContent.slice(0, 60)}${textContent.length > 60 ? '…' : ''}`)
   }
 })
 
