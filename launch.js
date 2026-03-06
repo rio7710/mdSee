@@ -10,7 +10,10 @@ const electronExe = path.join(__dirname, 'node_modules', 'electron', 'dist', 'el
 const env = { ...process.env }
 delete env.ELECTRON_RUN_AS_NODE
 
-const child = spawn(electronExe, ['.'], {
+// 파일 연결(더블클릭)로 전달된 인자를 Electron 앱으로 그대로 전달한다.
+const passthroughArgs = process.argv.slice(2)
+
+const child = spawn(electronExe, ['.', ...passthroughArgs], {
   cwd: __dirname,
   stdio: 'inherit',
   env

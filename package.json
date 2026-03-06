@@ -1,6 +1,6 @@
 {
   "name": "mdsee",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Markdown file viewer with real-time preview",
   "main": "main.js",
   "scripts": {
@@ -50,3 +50,4 @@
     }
   }
 }
+

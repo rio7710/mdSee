@@ -9,6 +9,26 @@ let currentWatcher = null
 let currentFilePath = null
 const undoHistoryByFile = new Map()
 let updateInitialized = false
+
+function isSupportedDocumentFilePath(candidate) {
+  return /\.(md|markdown|json|xml)$/i.test(String(candidate || '').trim())
+}
+
+function resolveFilePathFromArgs(argvLike, options = {}) {
+  const requireExists = options.requireExists !== false
+  const argv = Array.isArray(argvLike) ? argvLike : []
+  for (const raw of argv) {
+    const token = String(raw || '').trim()
+    if (!token || token === '.' || token.startsWith('-')) continue
+    if (!isSupportedDocumentFilePath(token)) continue
+    const absPath = path.isAbsolute(token) ? token : path.resolve(token)
+    if (requireExists && !fs.existsSync(absPath)) continue
+    return absPath
+  }
+  return ''
+}
+
+let pendingLaunchFilePath = resolveFilePathFromArgs(process.argv, { requireExists: true })
 const defaultUiSettings = {
   configVersion: 1,
   lastOpenedFilePath: '',
@@ -20,6 +40,7 @@ const defaultUiSettings = {
   readAutoBlockSelect: true,
   readHtmlClip: false,
   readStripNumbers: false,
+  uiTheme: 'dark',
   locationShowH1: true,
   locationShowH2: true,
   locationShowH3: true,
@@ -129,6 +150,7 @@ function sanitizeSettings(input) {
     readAutoBlockSelect: src.readAutoBlockSelect !== false,
     readHtmlClip: !!src.readHtmlClip,
     readStripNumbers: !!src.readStripNumbers,
+    uiTheme: src.uiTheme === 'light' ? 'light' : 'dark',
     consoleVisible: src.consoleVisible !== false,
     locationShowH1: src.locationShowH1 !== false,
     locationShowH2: src.locationShowH2 !== false,
@@ -1028,6 +1050,13 @@ ipcMain.handle('app:getVersion', () => {
   }
 })
 
+ipcMain.handle('app:getLaunchFilePath', () => {
+  const filePath = pendingLaunchFilePath
+  // 시작 인자는 1회성으로 소비해 재요청 시 중복 로드되지 않게 한다.
+  pendingLaunchFilePath = ''
+  return { ok: true, filePath }
+})
+
 ipcMain.handle('app:listSystemFonts', () => {
   try {
     return { ok: true, fonts: listSystemFonts() }
@@ -1043,10 +1072,28 @@ ipcMain.on('window:maximize', () => {
 })
 ipcMain.on('window:close', () => mainWindow.close())
 
-app.whenReady().then(() => {
-  createWindow()
-  initAutoUpdater()
-})
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+
+if (!gotSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', (event, commandLine) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
+    }
+
+    const targetPath = resolveFilePathFromArgs(commandLine, { requireExists: true })
+    if (targetPath && mainWindow && !mainWindow.isDestroyed()) {
+      loadFile(targetPath)
+    }
+  })
+
+  app.whenReady().then(() => {
+    createWindow()
+    initAutoUpdater()
+  })
+}
 
 app.on('window-all-closed', () => {
   if (currentWatcher) currentWatcher.close()

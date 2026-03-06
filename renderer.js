@@ -38,6 +38,8 @@ const btnSave = document.getElementById('btnSave')
 const btnMoveLine = document.getElementById('btnMoveLine')
 const consoleMenuSwitch = document.getElementById('consoleMenuSwitch')
 const consoleMenuText = document.getElementById('consoleMenuText')
+const themeModeSwitch = document.getElementById('themeModeSwitch')
+const themeModeText = document.getElementById('themeModeText')
 const btnMinimize = document.getElementById('btnMinimize')
 const btnMaximize = document.getElementById('btnMaximize')
 const btnClose = document.getElementById('btnClose')
@@ -71,6 +73,7 @@ const readToggleHtmlClip = document.getElementById('readToggleHtmlClip')
 const readToggleLabels = document.getElementById('readToggleLabels')
 const readToggleAutoCopy = document.getElementById('readToggleAutoCopy')
 const readToggleStripNumbers = document.getElementById('readToggleStripNumbers')
+const readToggleColonBreak = document.getElementById('readToggleColonBreak')
 const labelContextMenu = document.getElementById('labelContextMenu')
 const labelContextMenuStatus = document.getElementById('labelContextMenuStatus')
 const modeSwitch = document.getElementById('modeSwitch')
@@ -94,6 +97,8 @@ const menuHideLabelsSwitch = document.getElementById('menuHideLabelsSwitch')
 const menuHideLabelsText = document.getElementById('menuHideLabelsText')
 const menuAutoCopySwitch = document.getElementById('menuAutoCopySwitch')
 const menuAutoCopyText = document.getElementById('menuAutoCopyText')
+const menuColonBreakSwitch = document.getElementById('menuColonBreakSwitch')
+const menuColonBreakText = document.getElementById('menuColonBreakText')
 const viewHeaderPalette = document.getElementById('viewHeaderPalette')
 const headerColorItems = Array.from(document.querySelectorAll('.header-color-item'))
 const headerFontItems = Array.from(document.querySelectorAll('.header-font-item'))
@@ -137,7 +142,9 @@ let readAutoCopy = false
 let readAutoBlockSelect = true
 let readHtmlClip = false
 let readStripNumbers = false
+let readColonBreak = false
 let advancedMenu = false
+let uiTheme = 'dark'
 let locationHeadingVisible = { 1: true, 2: true, 3: true, 4: true, 5: true, 6: true }
 const DEFAULT_HEADING_COLORS = {
   1: '#89b4fa',
@@ -594,6 +601,22 @@ async function invokeWithTimeout(channel, payload, timeoutMs = 8000) {
   } finally {
     if (timer) clearTimeout(timer)
   }
+}
+
+function normalizeUiTheme(value) {
+  return String(value || '').toLowerCase() === 'light' ? 'light' : 'dark'
+}
+
+function updateThemeToggleUi() {
+  const isLight = uiTheme === 'light'
+  if (themeModeSwitch) themeModeSwitch.checked = isLight
+  if (themeModeText) themeModeText.textContent = `테마: ${isLight ? '라이트' : '다크'}`
+}
+
+function applyUiTheme(nextTheme) {
+  uiTheme = normalizeUiTheme(nextTheme)
+  document.body.classList.toggle('light-theme', uiTheme === 'light')
+  updateThemeToggleUi()
 }
 
 function setConsoleVisibility(nextVisible) {
@@ -1348,11 +1371,13 @@ function updateReadMenuButtons() {
   readToggleLabels.textContent = labelText
   readToggleAutoCopy.textContent = copyText
   if (readToggleStripNumbers) readToggleStripNumbers.textContent = stripText
+  if (readToggleColonBreak) readToggleColonBreak.textContent = `콜론 줄바꿈: ${readColonBreak ? '켬' : '끔'}`
   readToggleAutoBlock.classList.toggle('is-on', readAutoBlockSelect)
   readToggleHtmlClip.classList.toggle('is-on', readHtmlClip)
   readToggleLabels.classList.toggle('is-on', readHideLabels)
   readToggleAutoCopy.classList.toggle('is-on', readAutoCopy)
   if (readToggleStripNumbers) readToggleStripNumbers.classList.toggle('is-on', readStripNumbers)
+  if (readToggleColonBreak) readToggleColonBreak.classList.toggle('is-on', readColonBreak)
   // 복사 드롭다운 메뉴 동기화
   if (menuAutoBlockText) menuAutoBlockText.textContent = `블럭지정: ${readAutoBlockSelect ? '자동' : '수동'}`
   if (menuAutoBlockSwitch) menuAutoBlockSwitch.checked = readAutoBlockSelect
@@ -1362,6 +1387,8 @@ function updateReadMenuButtons() {
   if (menuHideLabelsSwitch) menuHideLabelsSwitch.checked = readHideLabels
   if (menuAutoCopyText) menuAutoCopyText.textContent = `자동 복사: ${readAutoCopy ? '켬' : '끔'}`
   if (menuAutoCopySwitch) menuAutoCopySwitch.checked = readAutoCopy
+  if (menuColonBreakText) menuColonBreakText.textContent = `콜론 줄바꿈: ${readColonBreak ? '켬' : '끔'}`
+  if (menuColonBreakSwitch) menuColonBreakSwitch.checked = readColonBreak
 }
 
 function showReadContextMenu(x, y) {
@@ -1428,6 +1455,8 @@ function collectUiSettings() {
     readAutoBlockSelect,
     readHtmlClip,
     readStripNumbers,
+    readColonBreak,
+    uiTheme,
     locationShowH1: !!locationHeadingVisible[1],
     locationShowH2: !!locationHeadingVisible[2],
     locationShowH3: !!locationHeadingVisible[3],
@@ -1478,6 +1507,8 @@ function applyUiSettings(settings = {}) {
   readAutoBlockSelect = settings.readAutoBlockSelect !== false  // 기본값 true
   readHtmlClip = !!settings.readHtmlClip
   readStripNumbers = !!settings.readStripNumbers
+  readColonBreak = !!settings.readColonBreak
+  uiTheme = normalizeUiTheme(settings.uiTheme)
   locationHeadingVisible = {
     1: settings.locationShowH1 !== false,
     2: settings.locationShowH2 !== false,
@@ -1513,6 +1544,7 @@ function applyUiSettings(settings = {}) {
   defaultDocumentFont = String(settings.defaultDocumentFont || '').trim()
   settingTemplates = normalizeTemplateMap(settings.settingTemplates || {})
   activeTemplateName = String(settings.activeTemplateName || '').trim()
+  applyUiTheme(uiTheme)
   updateAdvancedMenuToggleUi()
   updateLocationHeadingToggleUi()
   updateStripNumbersUi()
@@ -1683,24 +1715,62 @@ function getTouchedBlocksFromTextNodes(range) {
 }
 
 function uniqueDeepestBlocks(blocks) {
-  return blocks.filter((el, _, arr) => !arr.some((other) => other !== el && el.contains(other)))
+  return blocks.filter((el, _, arr) => !arr.some((other) => {
+    if (other === el) return false
+    if (!el.contains(other)) return false
+    // 리스트는 상위 항목의 본문이 유실되지 않도록 부모 LI를 유지한다.
+    if (el.tagName === 'LI' && other.tagName === 'LI') return false
+    return true
+  }))
+}
+
+function getListItemDepth(li) {
+  let depth = 0
+  let current = li.parentElement
+  while (current) {
+    if (current.tagName === 'LI') depth += 1
+    current = current.parentElement
+  }
+  return depth
+}
+
+function getListItemPrefix(li) {
+  if (!li || li.tagName !== 'LI') return ''
+  const list = li.parentElement
+  if (!list) return ''
+  const tag = String(list.tagName || '').toUpperCase()
+  if (tag === 'OL') {
+    const items = Array.from(list.children).filter((child) => child.tagName === 'LI')
+    const index = items.indexOf(li)
+    const start = Number.parseInt(list.getAttribute('start') || '1', 10)
+    const base = Number.isFinite(start) ? start : 1
+    const seq = base + Math.max(0, index)
+    return `${seq}. `
+  }
+  return ''
 }
 
 function getBlockTextWithoutLabels(block) {
+  const isListItem = block.tagName === 'LI'
+  const listDepth = isListItem ? getListItemDepth(block) : 0
+  const listPrefix = isListItem ? getListItemPrefix(block) : ''
   const cloned = block.cloneNode(true)
   cloned.querySelectorAll('.md-label').forEach((el) => el.remove())
-  if (cloned.tagName === 'LI') {
+  if (isListItem) {
     cloned.querySelectorAll('ul, ol').forEach((n) => n.remove())
   }
   const raw = cloned.innerText || cloned.textContent || ''
   // 단일 블록 내부는 줄바꿈 없이 공백으로 이어붙임
-  return String(raw || '')
+  const normalized = String(raw || '')
     .replace(/\u00a0/g, ' ')
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
     .join(' ')
     .trim()
+  if (!normalized) return ''
+  if (!isListItem) return normalized
+  return `${listPrefix}${normalized}`
 }
 
 function normalizeCopiedText(text) {
@@ -1720,6 +1790,126 @@ function stripNumberLabels(text) {
   return text
     .replace(/^[ \t]*(?:\(\d+\)|\d+[.)]|[IVXLCDMivxlcdm]+\.) +/gm, '')
     .trim()
+}
+
+function escapeHtml(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+function shouldSkipColonBreak(beforeText) {
+  const lead = String(beforeText || '')
+    .replace(/\*\*/g, '')
+    .replace(/^[\s\-*+\d.)]+/, '')
+    .trim()
+  return /^(예|예시|ex|e\.g)$/i.test(lead)
+}
+
+function parseColonBreakLine(line) {
+  const raw = String(line || '')
+  const idx = raw.indexOf(':')
+  if (idx < 1 || idx >= raw.length - 1) return null
+
+  let before = raw.slice(0, idx)
+  let rest = raw.slice(idx + 1)
+
+  // URL 스킴(예: https://)은 콜론 줄바꿈 대상에서 제외
+  const schemeCandidate = before.replace(/^[\s\-*+\d.)]+/, '').trim()
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*$/.test(schemeCandidate) && rest.startsWith('//')) return null
+
+  // ':**' 형태(콜론 뒤 볼드 닫힘 마커) 복원
+  if (rest.startsWith('**')) {
+    before += '**'
+    rest = rest.slice(2)
+  }
+
+  const after = rest.trim()
+  if (!after) return null
+  if (shouldSkipColonBreak(before)) return null
+
+  return { before, after }
+}
+
+// 콜론 줄바꿈 HTML 버전: Word/PPT 붙여넣기용 볼드 포함 HTML 생성
+function colonBreakToHtml(text) {
+  const lines = text.split('\n')
+  const parts = []
+  for (const line of lines) {
+    if (!line.trim()) continue
+    const parsed = parseColonBreakLine(line)
+    if (!parsed) {
+      parts.push('<p>' + escapeHtml(line.trim()) + '</p>')
+      continue
+    }
+    const termRaw = parsed.before.replace(/\*\*/g, '').replace(/^[\s\-*+\d.)]+/, '').trim()
+    const after = parsed.after
+    parts.push('<p><b>' + escapeHtml(termRaw) + '</b></p>')
+    parts.push('<ul><li>' + escapeHtml(after) + '</li></ul>')
+  }
+  return '<div>' + parts.join('') + '</div>'
+}
+
+// 콜론 줄바꿈: ":" 를 기준으로 뒤 내용을 한 단계 하위 위계로 분리 (클립보드용)
+function applyColonBreak(text) {
+  return text
+    .split('\n')
+    .flatMap((line) => {
+      const parsed = parseColonBreakLine(line)
+      if (!parsed) return [line]
+      return [parsed.before.trimEnd(), '  ' + parsed.after]
+    })
+    .join('\n')
+}
+
+// 콜론 줄바꿈: 마크다운 텍스트 레벨 변환 (읽기 모드 렌더링용, 원본 불변)
+function applyColonBreakToMarkdown(mdText) {
+  const lines = mdText.split('\n')
+  const result = []
+  let inFrontmatter = lines.length > 0 && lines[0].trim() === '---'
+  let inCodeBlock = false
+
+  for (const line of lines) {
+    if (inFrontmatter) {
+      result.push(line)
+      if (result.length > 1 && line.trim() === '---') inFrontmatter = false
+      continue
+    }
+    if (/^```/.test(line.trimStart())) {
+      inCodeBlock = !inCodeBlock
+      result.push(line)
+      continue
+    }
+    if (inCodeBlock) {
+      result.push(line)
+      continue
+    }
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('|') || trimmed.startsWith('>')) {
+      result.push(line)
+      continue
+    }
+    const parsed = parseColonBreakLine(line)
+    if (!parsed) {
+      result.push(line)
+      continue
+    }
+    const beforeColon = parsed.before
+    const after = parsed.after
+    const leading = (line.match(/^(\s*)/) || ['', ''])[1]
+    const isListItem = /^(\s*)[-*+]\s/.test(line) || /^(\s*)\d+[.)]\s/.test(line)
+    // 리스트 마커 분리 후 텍스트 부분만 강조 (마커 뒤 공백 필수)
+    const markerMatch = beforeColon.match(/^(\s*(?:[-*+]|\d+[.)])\s+)(.*)$/)
+    const markerPart = markerMatch ? markerMatch[1] : leading
+    const textPart = markerMatch ? markerMatch[2] : beforeColon.replace(/^\s+/, '')
+    const normalizedTextPart = textPart.trimEnd()
+    const alreadyBold = /^\*\*/.test(normalizedTextPart)
+    const boldText = normalizedTextPart ? (alreadyBold ? normalizedTextPart : '**' + normalizedTextPart + '**') : ''
+    result.push(markerPart + boldText)
+    result.push(leading + (isListItem ? '  - ' : '- ') + after)
+  }
+  return result.join('\n')
 }
 
 function toCRLF(text) {
@@ -1892,7 +2082,8 @@ function expandSelectionToBlocks() {
 async function syncReadSelectionAutoCopy() {
   if (!isReadMode || !readAutoCopy) return
   const raw = getSelectionTextWithoutLabels()
-  const text = readStripNumbers ? stripNumberLabels(raw) : raw
+  let text = readStripNumbers ? stripNumberLabels(raw) : raw
+  if (readColonBreak) text = applyColonBreak(text)
   const normalized = text.trim()
   if (!normalized || normalized === lastAutoCopiedText) return
   const ok = await copyTextToClipboard(text, '자동블록복사')
@@ -1921,6 +2112,7 @@ function setReadMode(nextReadMode) {
   applyTableMarkerMergeView()
   hideAllContextMenus()
   renderLineGutter()
+  if (readColonBreak && workingContent) renderMarkdown(workingContent)
 }
 
 function showTocContextMenu(x, y, contextInfo = {}) {
@@ -2375,7 +2567,9 @@ function renderMarkdown(content) {
     scrollRatio = markdownView.scrollTop / markdownView.scrollHeight
   }
 
-  markdownBody.innerHTML = marked.parse(decorateLabelsForDisplay(content))
+  const decorated = decorateLabelsForDisplay(content)
+  const displayMd = (isReadMode && readColonBreak) ? applyColonBreakToMarkdown(decorated) : decorated
+  markdownBody.innerHTML = marked.parse(displayMd)
   applyTableMarkerMergeView()
   annotateSourceLines(content)
   applyLineGuideMarkers(content)
@@ -2424,11 +2618,34 @@ async function initializeAppState() {
   updateHeaderColorItemUi()
   updateHeadingFontInputUi()
   updateHeaderFontItemUi()
+  applyUiTheme(uiTheme)
   setReadMode(false)
   updateAdvancedMenuToggleUi()
   updateReadMenuButtons()
   const settings = await loadUiSettings()
   loadAppVersion()
+
+  if (currentFilePath) {
+    appendDebugLog('INFO', 'startup: file already loaded by main')
+    return
+  }
+
+  try {
+    const launchResult = await ipcRenderer.invoke('app:getLaunchFilePath')
+    const launchPath = launchResult && launchResult.ok && typeof launchResult.filePath === 'string'
+      ? launchResult.filePath
+      : ''
+    if (launchPath) {
+      const loadedByLaunch = await ipcRenderer.invoke('file:loadPath', launchPath)
+      if (loadedByLaunch) {
+        appendDebugLog('INFO', `startup: loaded launch file ${launchPath}`)
+        return
+      }
+      appendDebugLog('INFO', `startup: launch file load failed ${launchPath}`)
+    }
+  } catch (err) {
+    appendDebugLog('ERROR', `startup: launch file check failed ${err && err.message ? err.message : 'unknown'}`)
+  }
 
   const cachedPath = settings && typeof settings.lastOpenedFilePath === 'string'
     ? settings.lastOpenedFilePath
@@ -2463,6 +2680,13 @@ if (advancedMenuSwitch) {
   advancedMenuSwitch.addEventListener('change', () => {
     advancedMenu = !!advancedMenuSwitch.checked
     updateAdvancedMenuToggleUi()
+    saveUiSettings()
+  })
+}
+
+if (themeModeSwitch) {
+  themeModeSwitch.addEventListener('change', () => {
+    applyUiTheme(themeModeSwitch.checked ? 'light' : 'dark')
     saveUiSettings()
   })
 }
@@ -2517,6 +2741,24 @@ if (stripNumbersSwitch) {
     readStripNumbers = !!stripNumbersSwitch.checked
     updateStripNumbersUi()
     updateReadMenuButtons()
+    saveUiSettings()
+  })
+}
+
+if (readToggleColonBreak) {
+  readToggleColonBreak.addEventListener('click', () => {
+    readColonBreak = !readColonBreak
+    updateReadMenuButtons()
+    if (workingContent) renderMarkdown(workingContent)
+    saveUiSettings()
+  })
+}
+
+if (menuColonBreakSwitch) {
+  menuColonBreakSwitch.addEventListener('change', () => {
+    readColonBreak = !!menuColonBreakSwitch.checked
+    updateReadMenuButtons()
+    if (workingContent) renderMarkdown(workingContent)
     saveUiSettings()
   })
 }
@@ -3601,7 +3843,10 @@ document.addEventListener('copy', (e) => {
     ? (blocks || []).filter((b) => b.tagName === 'TABLE')
     : (wrapper ? [...wrapper.querySelectorAll('table')] : [])
 
-  const textContent = toCRLF(readStripNumbers ? stripNumberLabels(text) : text)
+  let _processed = readStripNumbers ? stripNumberLabels(text) : text
+  const colonHtml = readColonBreak ? colonBreakToHtml(_processed) : null
+  if (readColonBreak) _processed = applyColonBreak(_processed)
+  const textContent = toCRLF(_processed)
 
   if (tables.length > 0) {
     const htmlContent = tables.map((t) => t.outerHTML).join('\n')
@@ -3609,8 +3854,13 @@ document.addEventListener('copy', (e) => {
     const label = readHtmlClip ? '[복사:HTML클립]' : '[복사:표HTML]'
     appendDebugLog('INFO', `${label} 표${tables.length}개 ${textContent.length}자 — ${textContent.slice(0, 60)}${textContent.length > 60 ? '…' : ''}`)
   } else if (readHtmlClip || source === 'autoblock') {
-    clipboard.write({ text: textContent })
-    appendDebugLog('INFO', `[복사:텍스트] ${textContent.length}자 (${source}) — ${textContent.slice(0, 60)}${textContent.length > 60 ? '…' : ''}`)
+    if (colonHtml) {
+      clipboard.write({ html: colonHtml, text: textContent })
+      appendDebugLog('INFO', `[복사:콜론HTML] ${textContent.length}자 (${source}) — ${textContent.slice(0, 60)}${textContent.length > 60 ? '…' : ''}`)
+    } else {
+      clipboard.write({ text: textContent })
+      appendDebugLog('INFO', `[복사:텍스트] ${textContent.length}자 (${source}) — ${textContent.slice(0, 60)}${textContent.length > 60 ? '…' : ''}`)
+    }
   } else {
     if (e.clipboardData) e.clipboardData.setData('text/plain', textContent)
     appendDebugLog('INFO', `[일반복사] ${textContent.length}자 — ${textContent.slice(0, 60)}${textContent.length > 60 ? '…' : ''}`)
