@@ -671,6 +671,48 @@ body.drag-over .dropzone-inner svg {
   opacity: 0.5;
 }
 
+.breadcrumb-level-menu {
+  position: fixed;
+  z-index: 1400;
+  max-height: 48vh;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  padding: 6px;
+}
+
+.breadcrumb-level-item {
+  width: 100%;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.breadcrumb-level-item:hover {
+  background: var(--bg-soft);
+}
+
+.breadcrumb-level-item.is-active {
+  background: rgba(99, 102, 241, 0.18);
+}
+
+.breadcrumb-level-meta {
+  color: var(--text-muted);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
 .breadcrumb-color-dot {
   width: 14px;
   height: 14px;

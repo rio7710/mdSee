@@ -40,6 +40,7 @@ const defaultUiSettings = {
   readAutoBlockSelect: true,
   readHtmlClip: false,
   readStripNumbers: false,
+  readColonBreak: false,
   uiTheme: 'dark',
   locationShowH1: true,
   locationShowH2: true,
@@ -69,6 +70,16 @@ const defaultUiSettings = {
   consoleVisible: true,
   settingTemplates: {},
   activeTemplateName: ''
+}
+
+function parseBooleanSetting(value, fallback = false) {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    if (normalized === 'true') return true
+    if (normalized === 'false') return false
+  }
+  return fallback
 }
 
 function sanitizeHeadingFamily(value) {
@@ -150,6 +161,7 @@ function sanitizeSettings(input) {
     readAutoBlockSelect: src.readAutoBlockSelect !== false,
     readHtmlClip: !!src.readHtmlClip,
     readStripNumbers: !!src.readStripNumbers,
+    readColonBreak: parseBooleanSetting(src.readColonBreak, false),
     uiTheme: src.uiTheme === 'light' ? 'light' : 'dark',
     consoleVisible: src.consoleVisible !== false,
     locationShowH1: src.locationShowH1 !== false,

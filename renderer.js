@@ -45,6 +45,18 @@ const btnMaximize = document.getElementById('btnMaximize')
 const btnClose = document.getElementById('btnClose')
 const btnToc = document.getElementById('btnToc')
 const breadcrumbBar = document.getElementById('breadcrumbBar')
+const breadcrumbLevelMenu = document.createElement('div')
+breadcrumbLevelMenu.className = 'breadcrumb-level-menu'
+breadcrumbLevelMenu.style.display = 'none'
+document.body.appendChild(breadcrumbLevelMenu)
+const breadcrumbContextMenu = document.createElement('div')
+breadcrumbContextMenu.className = 'context-menu'
+breadcrumbContextMenu.style.display = 'none'
+breadcrumbContextMenu.innerHTML = [
+  '<div class="context-menu-status">로케이션 메뉴</div>',
+  '<button class="context-menu-item" data-action="copyToc">목차 복사하기</button>'
+].join('')
+document.body.appendChild(breadcrumbContextMenu)
 const actionToast = document.getElementById('actionToast')
 const debugConsole = document.getElementById('debugConsole')
 const debugConsoleBody = document.getElementById('debugConsoleBody')
@@ -171,6 +183,16 @@ let activeHeaderFontLevel = 0
 let availableSystemFonts = []
 let settingTemplates = {}
 let activeTemplateName = ''
+
+function parseBooleanSetting(value, fallback = false) {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    if (normalized === 'true') return true
+    if (normalized === 'false') return false
+  }
+  return fallback
+}
 let lastAutoCopiedText = ''
 let lastReadSelectedBlocks = []
 let activeInlineEditor = null
@@ -181,6 +203,10 @@ let suppressGlobalMenuCloseUntil = 0
 let toastTimer = null
 let lastOpenedFilePath = ''
 const RAINBOW_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#a855f7']
+let breadcrumbMenuLevel = 0
+let breadcrumbMenuAnchorIndex = -1
+const breadcrumbCopyTocBtn = breadcrumbContextMenu.querySelector('[data-action="copyToc"]')
+let breadcrumbContextTarget = { level: 0, headingIndex: -1 }
 
 function isHexColor(v) {
   return /^#([0-9a-fA-F]{6})$/.test(String(v || ''))
@@ -1260,10 +1286,13 @@ function findBestBlockForSourceLine(sourceLine) {
   return blocks[blocks.length - 1].el
 }
 
-function jumpToSourceLine(sourceLine) {
+function jumpToSourceLine(sourceLine, options = {}) {
   const block = findBestBlockForSourceLine(sourceLine)
   if (!block) return false
-  const targetTop = Math.max(0, block.offsetTop - Math.floor(markdownView.clientHeight * 0.35))
+  const alignTop = options && options.alignTop === true
+  const targetTop = alignTop
+    ? Math.max(0, block.offsetTop)
+    : Math.max(0, block.offsetTop - Math.floor(markdownView.clientHeight * 0.35))
   markdownView.scrollTo({ top: targetTop, behavior: 'smooth' })
   lastJumpedSourceLine = sourceLine
   block.classList.add('line-jump-target')
@@ -1354,10 +1383,81 @@ function hideLabelContextMenu() {
   labelContextTarget = null
 }
 
+function hideBreadcrumbLevelMenu() {
+  breadcrumbLevelMenu.style.display = 'none'
+  breadcrumbLevelMenu.innerHTML = ''
+  breadcrumbMenuLevel = 0
+  breadcrumbMenuAnchorIndex = -1
+}
+
+function hideBreadcrumbContextMenu() {
+  breadcrumbContextMenu.style.display = 'none'
+  breadcrumbContextTarget = { level: 0, headingIndex: -1 }
+}
+
+function showBreadcrumbContextMenu(x, y, context = {}) {
+  hideBreadcrumbLevelMenu()
+  breadcrumbContextMenu.style.display = 'block'
+  const statusEl = breadcrumbContextMenu.querySelector('.context-menu-status')
+  const level = Number(context.level)
+  const headingIndex = Number(context.headingIndex)
+  breadcrumbContextTarget = {
+    level: Number.isInteger(level) ? level : 0,
+    headingIndex: Number.isInteger(headingIndex) ? headingIndex : -1
+  }
+  if (statusEl) {
+    if (breadcrumbContextTarget.level >= 1) {
+      statusEl.textContent = `로케이션 메뉴 (H${breadcrumbContextTarget.level} 기준)`
+    } else {
+      statusEl.textContent = '로케이션 메뉴'
+    }
+  }
+  const menuWidth = breadcrumbContextMenu.offsetWidth || 170
+  const menuHeight = breadcrumbContextMenu.offsetHeight || 86
+  const maxX = window.innerWidth - menuWidth - 8
+  const maxY = window.innerHeight - menuHeight - 8
+  breadcrumbContextMenu.style.left = `${Math.max(8, Math.min(x, maxX))}px`
+  breadcrumbContextMenu.style.top = `${Math.max(8, Math.min(y, maxY))}px`
+}
+
+function buildHeadingOutlineText(level = 0, headingIndex = -1) {
+  const headings = Array.from(markdownBody.querySelectorAll('h1, h2, h3, h4, h5, h6'))
+  if (!headings.length) return ''
+
+  let from = 0
+  let to = headings.length
+  const targetLevel = Number(level)
+  const targetIndex = Number(headingIndex)
+
+  // H1 선택 시 문서 전체 목차 복사
+  if (Number.isInteger(targetLevel) && targetLevel >= 2 && Number.isInteger(targetIndex) && targetIndex >= 0 && targetIndex < headings.length) {
+    from = targetIndex
+    for (let i = targetIndex + 1; i < headings.length; i++) {
+      const lv = Number(headings[i].tagName[1])
+      if (lv <= targetLevel) {
+        to = i
+        break
+      }
+    }
+  }
+
+  return headings
+    .slice(from, to)
+    .map((h) => {
+      const text = String(h.textContent || '').trim()
+      if (!text) return ''
+      return text
+    })
+    .filter(Boolean)
+    .join('\n')
+}
+
 function hideAllContextMenus() {
   hideTocContextMenu()
   hideReadContextMenu()
   hideLabelContextMenu()
+  hideBreadcrumbLevelMenu()
+  hideBreadcrumbContextMenu()
 }
 
 function updateReadMenuButtons() {
@@ -1507,7 +1607,7 @@ function applyUiSettings(settings = {}) {
   readAutoBlockSelect = settings.readAutoBlockSelect !== false  // 기본값 true
   readHtmlClip = !!settings.readHtmlClip
   readStripNumbers = !!settings.readStripNumbers
-  readColonBreak = !!settings.readColonBreak
+  readColonBreak = parseBooleanSetting(settings.readColonBreak, false)
   uiTheme = normalizeUiTheme(settings.uiTheme)
   locationHeadingVisible = {
     1: settings.locationShowH1 !== false,
@@ -2083,7 +2183,7 @@ async function syncReadSelectionAutoCopy() {
   if (!isReadMode || !readAutoCopy) return
   const raw = getSelectionTextWithoutLabels()
   let text = readStripNumbers ? stripNumberLabels(raw) : raw
-  if (readColonBreak) text = applyColonBreak(text)
+  if (isReadMode && readColonBreak) text = applyColonBreak(text)
   const normalized = text.trim()
   if (!normalized || normalized === lastAutoCopiedText) return
   const ok = await copyTextToClipboard(text, '자동블록복사')
@@ -2503,17 +2603,18 @@ function updateBreadcrumb() {
   // 각 레벨별 가장 최근 지나친 헤딩 추적 (h1~h4 기준)
   const current = {}
   const allHeadings = Array.from(markdownBody.querySelectorAll('h1, h2, h3, h4, h5, h6'))
-  for (const h of allHeadings) {
+  for (let index = 0; index < allHeadings.length; index++) {
+    const h = allHeadings[index]
     if (h.offsetTop > scrollTop) break
     const lv = Number(h.tagName[1])
-    current[lv] = (h.textContent || '').trim()
+    current[lv] = { text: (h.textContent || '').trim(), headingIndex: index }
     // 하위 레벨 초기화 (새 상위 헤딩이 나오면 하위는 리셋)
     for (let deeper = lv + 1; deeper <= 6; deeper++) delete current[deeper]
   }
   const enabledLevels = [1, 2, 3, 4, 5, 6].filter((lv) => !!locationHeadingVisible[lv])
   const chain = enabledLevels
-    .map((lv) => ({ level: lv, text: current[lv] }))
-    .filter((x) => !!x.text)
+    .map((lv) => ({ level: lv, ...current[lv] }))
+    .filter((x) => !!x.text && Number.isInteger(x.headingIndex))
   if (!chain.length) {
     breadcrumbBar.innerHTML = ''
     return
@@ -2522,9 +2623,81 @@ function updateBreadcrumb() {
     const isLast = i === chain.length - 1
     const text = String(entry.text || '')
     const level = Number(entry.level || 1)
-    const item = `<span class="breadcrumb-item bc-lv${level}${isLast ? ' bc-last' : ''}" title="${text}">${text}</span>`
+    const item = `<span class="breadcrumb-item bc-lv${level}${isLast ? ' bc-last' : ''}" data-level="${level}" data-heading-index="${entry.headingIndex}" title="${text}">${text}</span>`
     return i < chain.length - 1 ? item + '<span class="breadcrumb-sep">›</span>' : item
   }).join('')
+}
+
+function openBreadcrumbLevelMenu(anchorEl, level, currentHeadingIndex) {
+  const targetLevel = Number(level)
+  const anchorIndex = Number(currentHeadingIndex)
+  if (!anchorEl || !Number.isInteger(targetLevel) || targetLevel < 1 || targetLevel > 6) return
+  if (!Number.isInteger(anchorIndex) || anchorIndex < 0) return
+  const headings = Array.from(markdownBody.querySelectorAll('h1, h2, h3, h4, h5, h6'))
+  const parentLevel = Math.max(1, targetLevel - 1)
+  let parentIndex = -1
+  if (targetLevel > 1) {
+    for (let idx = anchorIndex - 1; idx >= 0; idx--) {
+      const lv = Number(headings[idx].tagName[1])
+      if (lv < targetLevel) {
+        if (lv === parentLevel) {
+          parentIndex = idx
+          break
+        }
+      }
+    }
+  }
+
+  const sectionStart = parentIndex >= 0 ? parentIndex + 1 : 0
+  let sectionEnd = headings.length
+  for (let idx = sectionStart; idx < headings.length; idx++) {
+    if (idx <= anchorIndex) continue
+    const el = headings[idx]
+    const lv = Number(el.tagName[1])
+    if (lv <= parentLevel) {
+      sectionEnd = idx
+      break
+    }
+  }
+
+  const scopedSiblings = []
+  for (let idx = sectionStart; idx < sectionEnd; idx++) {
+    const el = headings[idx]
+    const lv = Number(el.tagName[1])
+    if (lv !== targetLevel) continue
+    const text = String(el.textContent || '').trim()
+    if (!text) continue
+    scopedSiblings.push({
+      el,
+      headingIndex: idx,
+      level: lv,
+      text,
+      sourceLine: Number(el.dataset.srcLine)
+    })
+  }
+
+  if (!scopedSiblings.length) {
+    hideBreadcrumbLevelMenu()
+    return
+  }
+
+  breadcrumbLevelMenu.innerHTML = scopedSiblings.map((item) => {
+    const activeClass = item.headingIndex === currentHeadingIndex ? ' is-active' : ''
+    const lineInfo = Number.isInteger(item.sourceLine) && item.sourceLine >= 0 ? ` · L${item.sourceLine + 1}` : ''
+    return `<button class="breadcrumb-level-item${activeClass}" data-heading-index="${item.headingIndex}" data-source-line="${Number.isInteger(item.sourceLine) ? item.sourceLine : ''}">${escapeHtml(item.text)}<span class="breadcrumb-level-meta">${lineInfo}</span></button>`
+  }).join('')
+  breadcrumbLevelMenu.style.display = 'block'
+  breadcrumbMenuLevel = targetLevel
+  breadcrumbMenuAnchorIndex = anchorIndex
+
+  const rect = anchorEl.getBoundingClientRect()
+  const menuWidth = Math.min(460, Math.max(260, Math.floor(window.innerWidth * 0.45)))
+  breadcrumbLevelMenu.style.width = `${menuWidth}px`
+  const maxX = Math.max(8, window.innerWidth - menuWidth - 8)
+  const left = Math.max(8, Math.min(rect.left, maxX))
+  const top = Math.min(window.innerHeight - 8, rect.bottom + 6)
+  breadcrumbLevelMenu.style.left = `${left}px`
+  breadcrumbLevelMenu.style.top = `${top}px`
 }
 
 function updateActiveToc() {
@@ -3713,11 +3886,74 @@ labelContextMenu.addEventListener('click', (e) => {
   hideLabelContextMenu()
 })
 
+if (breadcrumbBar) {
+  breadcrumbBar.addEventListener('click', (e) => {
+    const item = e.target.closest('.breadcrumb-item')
+    if (!item) return
+    const level = Number(item.dataset.level)
+    const headingIndex = Number(item.dataset.headingIndex)
+    const isOpenSameAnchor = breadcrumbLevelMenu.style.display !== 'none'
+      && breadcrumbMenuLevel === level
+      && breadcrumbMenuAnchorIndex === headingIndex
+    if (isOpenSameAnchor) {
+      hideBreadcrumbLevelMenu()
+      return
+    }
+    openBreadcrumbLevelMenu(item, level, headingIndex)
+  })
+  breadcrumbBar.addEventListener('contextmenu', (e) => {
+    e.preventDefault()
+    const item = e.target.closest('.breadcrumb-item')
+    if (item) {
+      showBreadcrumbContextMenu(e.clientX, e.clientY, {
+        level: Number(item.dataset.level),
+        headingIndex: Number(item.dataset.headingIndex)
+      })
+      return
+    }
+    showBreadcrumbContextMenu(e.clientX, e.clientY)
+  })
+}
+
+breadcrumbLevelMenu.addEventListener('click', (e) => {
+  const item = e.target.closest('.breadcrumb-level-item')
+  if (!item) return
+  const headingIndex = Number(item.dataset.headingIndex)
+  const rawSourceLine = String(item.dataset.sourceLine || '').trim()
+  const sourceLine = rawSourceLine ? Number(rawSourceLine) : NaN
+  hideBreadcrumbLevelMenu()
+  if (Number.isInteger(sourceLine) && sourceLine >= 0) {
+    jumpToSourceLine(sourceLine, { alignTop: true })
+    return
+  }
+  const headings = Array.from(markdownBody.querySelectorAll('h1, h2, h3, h4, h5, h6'))
+  const heading = headings[headingIndex]
+  if (!heading) return
+  const targetTop = Math.max(0, heading.offsetTop)
+  markdownView.scrollTo({ top: targetTop, behavior: 'smooth' })
+})
+
+if (breadcrumbCopyTocBtn) {
+  breadcrumbCopyTocBtn.addEventListener('click', async () => {
+    const tocText = buildHeadingOutlineText(breadcrumbContextTarget.level, breadcrumbContextTarget.headingIndex)
+    hideBreadcrumbContextMenu()
+    if (!tocText) {
+      appendDebugLog('INFO', '[목차복사] 복사할 헤딩이 없습니다.')
+      return
+    }
+    const ok = await copyTextToClipboard(tocText, '목차복사')
+    appendDebugLog(ok ? 'INFO' : 'ERROR', ok ? '[목차복사] 완료' : '[목차복사] 실패')
+  })
+}
+
 document.addEventListener('pointerdown', (e) => {
   const target = e.target
   const inTocMenu = tocContextMenu.contains(target)
   const inReadMenu = readContextMenu.contains(target)
   const inLabelMenu = labelContextMenu.contains(target)
+  const inBreadcrumbMenu = breadcrumbLevelMenu.contains(target)
+  const inBreadcrumbBar = breadcrumbBar ? breadcrumbBar.contains(target) : false
+  const inBreadcrumbContextMenu = breadcrumbContextMenu.contains(target)
   if (!inTocMenu && tocContextMenu.style.display !== 'none') {
     resetTocContextState('outside-pointerdown')
     appendDebugLog('INFO', 'menu:toc closed by outside pointerdown')
@@ -3729,6 +3965,12 @@ document.addEventListener('pointerdown', (e) => {
   if (!inLabelMenu && labelContextMenu.style.display !== 'none') {
     hideLabelContextMenu()
     appendDebugLog('INFO', 'menu:label closed by outside pointerdown')
+  }
+  if (!inBreadcrumbMenu && !inBreadcrumbBar && breadcrumbLevelMenu.style.display !== 'none') {
+    hideBreadcrumbLevelMenu()
+  }
+  if (!inBreadcrumbContextMenu && !inBreadcrumbBar && breadcrumbContextMenu.style.display !== 'none') {
+    hideBreadcrumbContextMenu()
   }
 }, true)
 
@@ -3844,8 +4086,9 @@ document.addEventListener('copy', (e) => {
     : (wrapper ? [...wrapper.querySelectorAll('table')] : [])
 
   let _processed = readStripNumbers ? stripNumberLabels(text) : text
-  const colonHtml = readColonBreak ? colonBreakToHtml(_processed) : null
-  if (readColonBreak) _processed = applyColonBreak(_processed)
+  const enableColonBreakForCopy = isReadMode && readColonBreak
+  const colonHtml = enableColonBreakForCopy ? colonBreakToHtml(_processed) : null
+  if (enableColonBreakForCopy) _processed = applyColonBreak(_processed)
   const textContent = toCRLF(_processed)
 
   if (tables.length > 0) {
